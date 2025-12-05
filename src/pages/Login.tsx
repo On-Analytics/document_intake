@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useNavigate } from 'react-router-dom'
-import { FileText, Sparkles, Lock, CheckCircle } from 'lucide-react'
+import { FileText, Sparkles, Lock, Eye, EyeOff, Loader2, Mail } from 'lucide-react'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -9,7 +9,14 @@ export default function Login() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isSignUp, setIsSignUp] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
+  const [showForgotPassword, setShowForgotPassword] = useState(false)
+  const emailInputRef = useRef<HTMLInputElement>(null)
   const navigate = useNavigate()
+
+  useEffect(() => {
+    emailInputRef.current?.focus()
+  }, [])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -33,14 +40,19 @@ export default function Login() {
   const handleSignUp = async () => {
     setLoading(true)
     setError(null)
-    
-    // Simple signup flow
+
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters long')
+      setLoading(false)
+      return
+    }
+
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         data: {
-          full_name: email.split('@')[0] // Use part of email as default name
+          full_name: email.split('@')[0]
         }
       }
     })
@@ -48,12 +60,61 @@ export default function Login() {
     if (error) {
       setError(error.message)
     } else if (data.session) {
-      // If email confirmation is disabled, we get a session immediately
       navigate('/')
     } else {
       setError("Account created! Please check your email to confirm your account before logging in.")
     }
     setLoading(false)
+  }
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      setError('Please enter your email address')
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    })
+
+    if (error) {
+      setError(error.message)
+    } else {
+      setError('Password reset email sent! Check your inbox.')
+    }
+
+    setLoading(false)
+    setShowForgotPassword(false)
+  }
+
+  const handleModeSwitch = () => {
+    setIsSignUp(!isSignUp)
+    setError(null)
+    setEmail('')
+    setPassword('')
+    setShowPassword(false)
+    setShowForgotPassword(false)
+    emailInputRef.current?.focus()
+  }
+
+  const getPasswordStrength = (pass: string) => {
+    if (pass.length === 0) return { strength: 0, label: '', color: '' }
+    if (pass.length < 8) return { strength: 1, label: 'Too short', color: 'bg-red-500' }
+
+    let strength = 1
+    if (pass.length >= 8) strength++
+    if (pass.length >= 12) strength++
+    if (/[a-z]/.test(pass) && /[A-Z]/.test(pass)) strength++
+    if (/[0-9]/.test(pass)) strength++
+    if (/[^a-zA-Z0-9]/.test(pass)) strength++
+
+    if (strength <= 2) return { strength: 25, label: 'Weak', color: 'bg-red-500' }
+    if (strength <= 4) return { strength: 50, label: 'Fair', color: 'bg-yellow-500' }
+    if (strength <= 5) return { strength: 75, label: 'Good', color: 'bg-blue-500' }
+    return { strength: 100, label: 'Strong', color: 'bg-green-500' }
   }
 
   return (
@@ -131,9 +192,10 @@ export default function Login() {
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <CheckCircle className="h-5 w-5 text-primary" />
+                    <Mail className="h-5 w-5 text-gray-400" />
                   </div>
                   <input
+                    ref={emailInputRef}
                     id="email"
                     type="email"
                     required
@@ -146,54 +208,129 @@ export default function Login() {
               </div>
 
               <div>
-                <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-                  Password
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+                    Password
+                  </label>
+                  {!isSignUp && !showForgotPassword && (
+                    <button
+                      type="button"
+                      onClick={() => setShowForgotPassword(true)}
+                      className="text-xs font-medium text-primary hover:text-primary-600 transition-colors"
+                    >
+                      Forgot password?
+                    </button>
+                  )}
+                </div>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <Lock className="h-5 w-5 text-gray-400" />
                   </div>
                   <input
                     id="password"
-                    type="password"
+                    type={showPassword ? 'text' : 'password'}
                     required
-                    className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    minLength={isSignUp ? 8 : undefined}
+                    className="block w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                     placeholder="••••••••"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                   />
-                </div>
-              </div>
-
-              <div className="pt-4">
-                {isSignUp ? (
                   <button
                     type="button"
-                    onClick={handleSignUp}
-                    disabled={loading}
-                    className="w-full rounded-lg bg-primary px-4 py-3.5 text-sm font-semibold text-dark shadow-md hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center hover:text-gray-600 transition-colors"
                   >
-                    {loading ? 'Creating account...' : 'Create account'}
+                    {showPassword ? (
+                      <EyeOff className="h-5 w-5 text-gray-400" />
+                    ) : (
+                      <Eye className="h-5 w-5 text-gray-400" />
+                    )}
                   </button>
-                ) : (
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full rounded-lg bg-primary px-4 py-3.5 text-sm font-semibold text-dark shadow-md hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                  >
-                    {loading ? 'Signing in...' : 'Sign in'}
-                  </button>
+                </div>
+                {isSignUp && password.length > 0 && (
+                  <div className="mt-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-gray-600">Password strength</span>
+                      <span className={`text-xs font-medium ${
+                        getPasswordStrength(password).label === 'Strong' ? 'text-green-600' :
+                        getPasswordStrength(password).label === 'Good' ? 'text-blue-600' :
+                        getPasswordStrength(password).label === 'Fair' ? 'text-yellow-600' :
+                        'text-red-600'
+                      }`}>
+                        {getPasswordStrength(password).label}
+                      </span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-1.5">
+                      <div
+                        className={`h-1.5 rounded-full transition-all ${getPasswordStrength(password).color}`}
+                        style={{ width: `${getPasswordStrength(password).strength}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                {isSignUp && (
+                  <p className="mt-2 text-xs text-gray-500">
+                    Must be at least 8 characters long. Use uppercase, lowercase, numbers, and symbols for a stronger password.
+                  </p>
                 )}
               </div>
+
+              {showForgotPassword && (
+                <div className="rounded-lg bg-blue-50 border border-blue-200 p-4">
+                  <p className="text-sm text-blue-700 mb-3">
+                    Enter your email address and we'll send you a link to reset your password.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleForgotPassword}
+                      disabled={loading}
+                      className="flex-1 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-dark hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50 transition-all"
+                    >
+                      {loading ? 'Sending...' : 'Send reset link'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowForgotPassword(false)}
+                      className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {!showForgotPassword && (
+                <div className="pt-4">
+                  {isSignUp ? (
+                    <button
+                      type="button"
+                      onClick={handleSignUp}
+                      disabled={loading}
+                      className="w-full flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3.5 text-sm font-semibold text-dark shadow-md hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    >
+                      {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+                      {loading ? 'Creating account...' : 'Create account'}
+                    </button>
+                  ) : (
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="w-full flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3.5 text-sm font-semibold text-dark shadow-md hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    >
+                      {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+                      {loading ? 'Signing in...' : 'Sign in'}
+                    </button>
+                  )}
+                </div>
+              )}
             </form>
 
             <div className="mt-8 text-center">
               <button
                 type="button"
-                onClick={() => {
-                  setIsSignUp(!isSignUp)
-                  setError(null)
-                }}
+                onClick={handleModeSwitch}
                 className="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
               >
                 {isSignUp ? (
