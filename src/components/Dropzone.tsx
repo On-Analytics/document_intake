@@ -59,34 +59,53 @@ export default function Dropzone({ onFilesSelect, selectedFiles }: DropzoneProps
   if (selectedFiles.length > 0) {
     return (
       <div className="space-y-3">
-        {selectedFiles.map((file, index) => (
-          <div
-            key={`${file.name}-${index}`}
-            className={`flex items-center justify-between p-4 bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-xl shadow-sm ${pulseAnimation ? 'animate-pulse' : 'animate-in fade-in slide-in-from-top-2'}`}
-          >
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-white rounded-lg shadow-sm">
-                {getFileIcon(file.name)}
-              </div>
-              <div>
-                <div className="flex items-center gap-2 mb-0.5">
-                  <p className="font-semibold text-gray-900 text-sm">{file.name}</p>
-                  <CheckCircle className="h-4 w-4 text-green-600" />
-                </div>
-                <p className="text-xs text-gray-600">
-                  {(file.size / 1024 / 1024).toFixed(2)} MB
-                </p>
-              </div>
+        <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="h-5 w-5 text-green-600" />
+              <span className="font-semibold text-gray-900">
+                {selectedFiles.length} file{selectedFiles.length > 1 ? 's' : ''} selected
+              </span>
             </div>
             <button
-              onClick={() => removeFile(index)}
-              className="p-1.5 hover:bg-white rounded-lg text-gray-500 hover:text-red-600 transition-all"
-              title="Remove file"
+              onClick={() => onFilesSelect([])}
+              className="text-xs font-medium text-gray-600 hover:text-red-600 transition-colors"
             >
-              <X className="h-5 w-5" />
+              Clear all
             </button>
           </div>
-        ))}
+
+          <div className="max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {selectedFiles.map((file, index) => (
+                <div
+                  key={`${file.name}-${index}`}
+                  className={`group flex items-center gap-2 p-3 bg-white border border-green-200 rounded-lg hover:shadow-md transition-all ${pulseAnimation ? 'animate-pulse' : 'animate-in fade-in'}`}
+                >
+                  <div className="p-1.5 bg-gray-50 rounded">
+                    {getFileIcon(file.name)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-gray-900 text-xs truncate" title={file.name}>
+                      {file.name}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {(file.size / 1024 / 1024).toFixed(2)} MB
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => removeFile(index)}
+                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 rounded text-gray-400 hover:text-red-600 transition-all"
+                    title="Remove file"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
         <label className="block cursor-pointer">
           <input
             type="file"
@@ -98,9 +117,6 @@ export default function Dropzone({ onFilesSelect, selectedFiles }: DropzoneProps
           <div className="text-center py-4 border-2 border-dashed border-gray-300 rounded-xl bg-gray-50 hover:bg-white hover:border-green-400 transition-all">
             <p className="text-sm font-medium text-gray-700">
               + Add more files
-            </p>
-            <p className="text-xs text-gray-500 mt-1">
-              {selectedFiles.length} file{selectedFiles.length > 1 ? 's' : ''} ready to process
             </p>
           </div>
         </label>
