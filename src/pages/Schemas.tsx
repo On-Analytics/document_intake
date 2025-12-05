@@ -86,21 +86,34 @@ export default function Schemas() {
   }
 
   return (
-    <div className="space-y-8 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Extraction Templates</h1>
-          <p className="text-gray-600 mt-2">Create and manage custom schemas for your document processing workflows</p>
+    <div className="min-h-screen">
+      {/* Page Header */}
+      <div className="bg-white border-b border-gray-200 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl shadow-lg">
+                <FileText className="h-7 w-7 text-white" />
+              </div>
+              <div>
+                <h1 className="text-3xl font-bold text-gray-900">Templates</h1>
+                <p className="text-gray-600 mt-1">Create and manage custom extraction schemas</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 px-5 py-3 text-sm font-semibold text-white shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all"
+            >
+              <Plus className="h-5 w-5" />
+              New Template
+            </button>
+          </div>
         </div>
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-3 text-sm font-semibold text-dark shadow-md hover:shadow-lg hover:bg-primary-600 transition-all"
-        >
-          <Plus className="h-5 w-5" />
-          New Template
-        </button>
       </div>
+
+      {/* Page Content */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="space-y-8">
 
       {/* View Schema Modal */}
       {viewingSchema && (
@@ -236,6 +249,8 @@ export default function Schemas() {
         initialData={editingSchema?.data || null}
         existingSchemaId={editingSchema?.id || null}
       />
+        </div>
+      </div>
     </div>
   )
 }

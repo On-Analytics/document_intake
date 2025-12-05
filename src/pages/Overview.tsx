@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { FileText, Zap, TrendingUp, CheckCircle2, ChevronRight, Clock, AlertCircle, Sparkles } from 'lucide-react'
+import { FileText, Zap, TrendingUp, CheckCircle2, ChevronRight, Clock, AlertCircle, Sparkles, LayoutDashboard } from 'lucide-react'
 
 export default function Overview() {
   const navigate = useNavigate()
@@ -72,11 +72,25 @@ export default function Overview() {
   })
 
   return (
-    <div className="max-w-7xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Overview</h1>
-        <p className="text-gray-600">Track your document extraction activity and performance</p>
+    <div className="min-h-screen">
+      {/* Page Header */}
+      <div className="bg-white border-b border-gray-200 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-gradient-to-br from-blue-500 to-indigo-500 rounded-2xl shadow-lg">
+              <LayoutDashboard className="h-7 w-7 text-white" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">Overview</h1>
+              <p className="text-gray-600 mt-1">Track your document extraction activity and performance</p>
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* Page Content */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="space-y-8">
 
       {stats && stats.totalExtractions > 0 ? (
         <>
@@ -227,6 +241,8 @@ export default function Overview() {
           </button>
         </div>
       )}
+        </div>
+      </div>
     </div>
   )
 }

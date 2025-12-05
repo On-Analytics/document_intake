@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
-import { FileText, Calendar, Clock, CheckCircle, AlertCircle, Code, ChevronDown, ChevronRight, FileJson, FileSpreadsheet } from 'lucide-react'
+import { FileText, Calendar, Clock, CheckCircle, AlertCircle, Code, ChevronDown, ChevronRight, FileJson, FileSpreadsheet, FolderOpen } from 'lucide-react'
 import '../utils/debugStorage'
 
 interface ExtractionResult {
@@ -192,37 +192,45 @@ export default function History() {
   }
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Extraction Results</h1>
-          <p className="text-gray-600 mt-2">View and download your processed document results</p>
-        </div>
-        <div className="flex items-center gap-3">
-          {results && results.length > 0 && (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={downloadAllJSON}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-primary bg-primary/10 hover:bg-primary/20 rounded-lg transition-all"
-              >
-                <FileJson className="h-4 w-4" />
-                Download All JSON
-              </button>
-              <button
-                onClick={downloadAllCSV}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-lg transition-all"
-              >
-                <FileSpreadsheet className="h-4 w-4" />
-                Download All CSV
-              </button>
+    <div className="min-h-screen">
+      {/* Page Header */}
+      <div className="bg-white border-b border-gray-200 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-gradient-to-br from-amber-500 to-orange-500 rounded-2xl shadow-lg">
+                <FolderOpen className="h-7 w-7 text-white" />
+              </div>
+              <div>
+                <h1 className="text-3xl font-bold text-gray-900">Results</h1>
+                <p className="text-gray-600 mt-1">View and download your extraction results</p>
+              </div>
             </div>
-          )}
-          <div className="text-sm text-gray-500">
-            {results?.length || 0} total results
+            {results && results.length > 0 && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={downloadAllJSON}
+                  className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-white bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 rounded-xl shadow-lg hover:shadow-xl transition-all"
+                >
+                  <FileJson className="h-4 w-4" />
+                  JSON
+                </button>
+                <button
+                  onClick={downloadAllCSV}
+                  className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-white bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 rounded-xl shadow-lg hover:shadow-xl transition-all"
+                >
+                  <FileSpreadsheet className="h-4 w-4" />
+                  CSV
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Page Content */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="space-y-6">
 
       {/* Results List */}
       {results && results.length > 0 ? (
@@ -348,6 +356,8 @@ export default function History() {
           <p className="text-gray-600 mb-6">Process some documents to see results here</p>
         </div>
       )}
+        </div>
+      </div>
     </div>
   )
 }

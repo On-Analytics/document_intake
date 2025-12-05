@@ -271,11 +271,25 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Extract Data</h1>
-        <p className="text-gray-600">Upload your documents, select a template, and let AI extract structured data</p>
+    <div className="min-h-screen">
+      {/* Page Header */}
+      <div className="bg-white border-b border-gray-200 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-gradient-to-br from-green-500 to-emerald-500 rounded-2xl shadow-lg">
+              <Sparkles className="h-7 w-7 text-white" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">Extract Data</h1>
+              <p className="text-gray-600 mt-1">Upload documents and let AI extract structured data automatically</p>
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* Page Content */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="max-w-5xl mx-auto space-y-6">
 
 
       {/* Main Card */}
@@ -617,6 +631,8 @@ export default function Dashboard() {
         filesCount={processedFilesCount}
         processedFiles={processedFilesSummary}
       />
+        </div>
+      </div>
     </div>
   )
 }
