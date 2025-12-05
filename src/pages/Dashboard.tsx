@@ -289,71 +289,80 @@ export default function Dashboard() {
 
       {/* Page Content */}
       <div className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
-        <div className="max-w-5xl mx-auto space-y-6">
+        <div className="max-w-7xl mx-auto space-y-6">
 
-
-      {/* Main Card */}
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
-        {/* Step 1: File Upload */}
-        <div className="p-8 border-b border-gray-100">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-dark shadow-sm">
-              1
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">Upload Document</h2>
-              <p className="text-sm text-gray-500">Select a PDF or image file to process</p>
-            </div>
-          </div>
-          <Dropzone selectedFiles={files} onFilesSelect={setFiles} />
-        </div>
-
-        {/* Step 2: Select Template */}
-        {files.length > 0 && (
-          <div className="p-8 border-b border-gray-100 bg-gradient-to-br from-gray-50 to-white animate-in slide-in-from-top-2">
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-3">
+      {/* Two Column Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        {/* Left Column: File Upload */}
+        <div className="lg:col-span-2">
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden h-full">
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-6">
                 <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-dark shadow-sm">
-                  2
+                  1
                 </div>
                 <div>
-                  <h2 className="text-lg font-semibold text-gray-900">Choose Template</h2>
-                  <p className="text-sm text-gray-500">Select or create an extraction schema</p>
+                  <h2 className="text-lg font-semibold text-gray-900">Upload Documents</h2>
+                  <p className="text-sm text-gray-500">PDF or image files</p>
+                </div>
+              </div>
+              <Dropzone selectedFiles={files} onFilesSelect={setFiles} />
+            </div>
+          </div>
+        </div>
+
+        {/* Right Column: Template Selection */}
+        <div className="lg:col-span-3">
+          <div className={`bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden h-full transition-all ${
+            files.length === 0 ? 'opacity-40' : 'opacity-100'
+          }`}>
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-dark shadow-sm">
+                    2
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-900">Choose Template</h2>
+                    <p className="text-sm text-gray-500">Select extraction schema</p>
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  {selectedSchemaId && (
+                    <button
+                      onClick={openCloneModal}
+                      disabled={files.length === 0}
+                      title="Clone & Edit Template"
+                      className="flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm border border-gray-300 hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Copy className="h-4 w-4" />
+                      Clone
+                    </button>
+                  )}
+
+                  <button
+                    onClick={openCreateModal}
+                    disabled={files.length === 0}
+                    className="flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-dark shadow-sm hover:bg-primary-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Plus className="h-4 w-4" />
+                    New
+                  </button>
                 </div>
               </div>
 
-              <div className="flex gap-2">
-                {selectedSchemaId && (
-                  <button
-                    onClick={openCloneModal}
-                    title="Clone & Edit Template"
-                    className="flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm border border-gray-300 hover:bg-gray-50 hover:border-gray-400 transition-all"
-                  >
-                    <Copy className="h-4 w-4" />
-                    Clone
-                  </button>
-                )}
-
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 max-h-[600px] overflow-y-auto pr-2">
+                {/* Auto-detect Card */}
                 <button
-                  onClick={openCreateModal}
-                  className="flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-dark shadow-sm hover:bg-primary-600 transition-all"
+                  onClick={() => setSelectedSchemaId('')}
+                  disabled={files.length === 0}
+                  className={`relative text-left p-4 rounded-xl border-2 transition-all group hover:shadow-md disabled:cursor-not-allowed ${
+                    selectedSchemaId === ''
+                      ? 'border-green-500 bg-gradient-to-br from-green-50 to-emerald-50 shadow-md'
+                      : 'border-gray-200 bg-white hover:border-green-300'
+                  }`}
                 >
-                  <Plus className="h-4 w-4" />
-                  New Template
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* Auto-detect Card */}
-              <button
-                onClick={() => setSelectedSchemaId('')}
-                className={`relative text-left p-5 rounded-xl border-2 transition-all group hover:shadow-md ${
-                  selectedSchemaId === ''
-                    ? 'border-green-500 bg-gradient-to-br from-green-50 to-emerald-50 shadow-md'
-                    : 'border-gray-200 bg-white hover:border-green-300'
-                }`}
-              >
                 {selectedSchemaId === '' && (
                   <div className="absolute top-3 right-3">
                     <div className="bg-green-500 rounded-full p-1">
@@ -382,22 +391,23 @@ export default function Dashboard() {
                 </div>
               </button>
 
-              {/* Template Cards */}
-              {schemas?.map(schema => {
-                const fields = schema.content?.fields || []
-                const fieldCount = fields.length
-                const maxPreviewFields = 4
+                {/* Template Cards */}
+                {schemas?.map(schema => {
+                  const fields = schema.content?.fields || []
+                  const fieldCount = fields.length
+                  const maxPreviewFields = 3
 
-                return (
-                  <button
-                    key={schema.id}
-                    onClick={() => setSelectedSchemaId(schema.id)}
-                    className={`relative text-left p-5 rounded-xl border-2 transition-all group hover:shadow-md ${
-                      selectedSchemaId === schema.id
-                        ? 'border-blue-500 bg-gradient-to-br from-blue-50 to-cyan-50 shadow-md'
-                        : 'border-gray-200 bg-white hover:border-blue-300'
-                    }`}
-                  >
+                  return (
+                    <button
+                      key={schema.id}
+                      onClick={() => setSelectedSchemaId(schema.id)}
+                      disabled={files.length === 0}
+                      className={`relative text-left p-4 rounded-xl border-2 transition-all group hover:shadow-md disabled:cursor-not-allowed ${
+                        selectedSchemaId === schema.id
+                          ? 'border-blue-500 bg-gradient-to-br from-blue-50 to-cyan-50 shadow-md'
+                          : 'border-gray-200 bg-white hover:border-blue-300'
+                      }`}
+                    >
                     {selectedSchemaId === schema.id && (
                       <div className="absolute top-3 right-3">
                         <div className="bg-blue-500 rounded-full p-1">
@@ -465,50 +475,60 @@ export default function Dashboard() {
                       )}
                     </div>
                   </button>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Step 3: Action */}
-        {files.length > 0 && (
-          <div className="p-8 bg-gradient-to-br from-gray-50 to-white">
-            <div className="flex justify-between items-center">
-              <p className="text-sm text-gray-600">
-                <FileText className="inline h-4 w-4 mr-1" />
-                Ready to process: <span className="font-medium text-gray-900">{files.length} file{files.length > 1 ? 's' : ''}</span>
-              </p>
-              <div className="flex gap-3">
-                <button
-                  onClick={handleReset}
-                  className="rounded-lg bg-white px-4 py-2.5 text-sm font-medium text-gray-700 shadow-sm border border-gray-300 hover:bg-gray-50 hover:border-gray-400 transition-all"
-                >
-                  Clear
-                </button>
-                <button
-                  onClick={handleExtract}
-                  disabled={status === 'processing'}
-                  className="flex items-center gap-2 rounded-lg bg-primary px-6 py-2.5 text-sm font-semibold text-dark shadow-md hover:shadow-lg hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                >
-                  {status === 'processing' ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Processing {processingProgress.current}/{processingProgress.total}...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="h-4 w-4" />
-                      Extract Data
-                      <ChevronRight className="h-4 w-4" />
-                    </>
-                  )}
-                </button>
+                  )
+                })}
               </div>
             </div>
           </div>
-        )}
+        </div>
       </div>
+
+      {/* Action Bar */}
+      {files.length > 0 && (
+        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg">
+                <FileText className="h-5 w-5 text-green-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-900">
+                  {files.length} file{files.length > 1 ? 's' : ''} ready to process
+                </p>
+                <p className="text-xs text-gray-500">
+                  {selectedSchemaId ? 'Using selected template' : 'Using auto-detect mode'}
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={handleReset}
+                className="rounded-lg bg-white px-4 py-2.5 text-sm font-medium text-gray-700 shadow-sm border border-gray-300 hover:bg-gray-50 hover:border-gray-400 transition-all"
+              >
+                Clear All
+              </button>
+              <button
+                onClick={handleExtract}
+                disabled={status === 'processing'}
+                className="flex items-center gap-2 rounded-lg bg-primary px-6 py-2.5 text-sm font-semibold text-dark shadow-md hover:shadow-lg hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              >
+                {status === 'processing' ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Processing {processingProgress.current}/{processingProgress.total}...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4" />
+                    Extract Data
+                    <ChevronRight className="h-4 w-4" />
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Batch Processing Progress Indicator */}
       {status === 'processing' && fileStatuses.length > 0 && (
