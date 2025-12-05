@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
-import { X, Plus, Trash2, Save, HelpCircle, Sparkles, ChevronDown, ChevronRight, GripVertical } from 'lucide-react'
+import { X, Plus, Trash2, Save, HelpCircle, Sparkles, ChevronDown, ChevronRight, GripVertical, Archive } from 'lucide-react'
 
 interface SchemaField {
   name: string
   type: FieldType
   description: string
+  required?: boolean
   nested_fields?: SchemaField[]  // For object and list[object] types
 }
 
@@ -31,31 +32,83 @@ export default function CreateSchemaModal({ isOpen, onClose, onSuccess, initialD
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [fields, setFields] = useState<SchemaField[]>([
-    { name: 'new_field', type: 'string', description: '', nested_fields: [] }
+    { name: 'new_field', type: 'string', description: '', required: false, nested_fields: [] }
   ])
   const [expandedFields, setExpandedFields] = useState<Set<string>>(new Set())
   const [draggedPath, setDraggedPath] = useState<string | null>(null)
+  const [dragOverPath, setDragOverPath] = useState<string | null>(null)
+  const [hasDraft, setHasDraft] = useState(false)
+
+  const DRAFT_KEY = 'schema_draft'
+
+  const loadDraft = () => {
+    try {
+      const draft = localStorage.getItem(DRAFT_KEY)
+      if (draft) {
+        const parsed = JSON.parse(draft)
+        setName(parsed.name || '')
+        setDescription(parsed.description || '')
+        setFields(parsed.fields || [{ name: 'field_1', type: 'string', description: '', required: false, nested_fields: [] }])
+        setHasDraft(true)
+      }
+    } catch (e) {
+      console.error('Failed to load draft:', e)
+    }
+  }
+
+  const clearDraft = () => {
+    localStorage.removeItem(DRAFT_KEY)
+    setHasDraft(false)
+  }
+
+  const saveDraft = () => {
+    const draft = {
+      name,
+      description,
+      fields,
+      timestamp: Date.now()
+    }
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
+  }
 
   useEffect(() => {
     if (isOpen) {
       if (initialData) {
+        clearDraft()
         setName(initialData.name + ' (Copy)')
         setDescription(initialData.description)
         setFields(initialData.fields)
+      } else if (existingSchemaId) {
+        clearDraft()
       } else {
-        // Reset to default
-        setName('')
-        setDescription('')
-        setFields([{ name: 'field_1', type: 'string', description: '', nested_fields: [] }])
-        setExpandedFields(new Set())
+        const draft = localStorage.getItem(DRAFT_KEY)
+        if (draft) {
+          setHasDraft(true)
+        } else {
+          setName('')
+          setDescription('')
+          setFields([{ name: 'field_1', type: 'string', description: '', required: false, nested_fields: [] }])
+          setExpandedFields(new Set())
+        }
       }
     }
-  }, [isOpen, initialData])
+  }, [isOpen, initialData, existingSchemaId])
+
+  useEffect(() => {
+    if (isOpen && !initialData && !existingSchemaId) {
+      const timeoutId = setTimeout(() => {
+        if (name || description || fields.some(f => f.name || f.description)) {
+          saveDraft()
+        }
+      }, 1000)
+      return () => clearTimeout(timeoutId)
+    }
+  }, [name, description, fields, isOpen, initialData, existingSchemaId])
 
   const addField = (parentPath?: string) => {
     if (!parentPath) {
       // Add top-level field
-      setFields([...fields, { name: '', type: 'string', description: '', nested_fields: [] }])
+      setFields([...fields, { name: '', type: 'string', description: '', required: false, nested_fields: [] }])
     } else {
       // Add nested field
       const newFields = addNestedField(fields, parentPath)
@@ -66,7 +119,7 @@ export default function CreateSchemaModal({ isOpen, onClose, onSuccess, initialD
   const addNestedField = (fieldsList: SchemaField[], path: string): SchemaField[] => {
     const pathParts = path.split('.')
     const newFields = [...fieldsList]
-    
+
     let current: SchemaField[] = newFields
     for (let i = 0; i < pathParts.length - 1; i++) {
       const idx = parseInt(pathParts[i])
@@ -74,13 +127,13 @@ export default function CreateSchemaModal({ isOpen, onClose, onSuccess, initialD
         current = current[idx].nested_fields!
       }
     }
-    
+
     const lastIdx = parseInt(pathParts[pathParts.length - 1])
     if (!current[lastIdx].nested_fields) {
       current[lastIdx].nested_fields = []
     }
-    current[lastIdx].nested_fields!.push({ name: '', type: 'string', description: '', nested_fields: [] })
-    
+    current[lastIdx].nested_fields!.push({ name: '', type: 'string', description: '', required: false, nested_fields: [] })
+
     return newFields
   }
 
@@ -117,19 +170,19 @@ export default function CreateSchemaModal({ isOpen, onClose, onSuccess, initialD
     return newFields
   }
 
-  const updateField = (path: string, key: keyof SchemaField, value: string) => {
+  const updateField = (path: string, key: keyof SchemaField, value: string | boolean) => {
     const pathParts = path.split('.')
     const newFields = JSON.parse(JSON.stringify(fields)) // Deep clone
-    
+
     let current: SchemaField[] = newFields
     for (let i = 0; i < pathParts.length - 1; i++) {
       const idx = parseInt(pathParts[i])
       current = current[idx].nested_fields!
     }
-    
+
     const lastIdx = parseInt(pathParts[pathParts.length - 1])
     current[lastIdx] = { ...current[lastIdx], [key]: value }
-    
+
     // When changing to/from object or list[object], initialize/clear nested_fields
     if (key === 'type') {
       if (value === 'object' || value === 'list[object]') {
@@ -140,7 +193,7 @@ export default function CreateSchemaModal({ isOpen, onClose, onSuccess, initialD
         delete current[lastIdx].nested_fields
       }
     }
-    
+
     setFields(newFields)
   }
 
@@ -187,50 +240,40 @@ export default function CreateSchemaModal({ isOpen, onClose, onSuccess, initialD
     setDraggedPath(path)
     e.dataTransfer.effectAllowed = 'move'
     e.dataTransfer.setData('text/plain', path)
-    // Add visual feedback
-    if (e.currentTarget instanceof HTMLElement) {
-      e.currentTarget.style.opacity = '0.5'
-    }
   }
 
-  const handleDragEnd = (e: React.DragEvent) => {
+  const handleDragEnd = () => {
     setDraggedPath(null)
-    if (e.currentTarget instanceof HTMLElement) {
-      e.currentTarget.style.opacity = '1'
-    }
+    setDragOverPath(null)
   }
 
-  const handleDragOver = (e: React.DragEvent) => {
+  const handleDragOver = (e: React.DragEvent, targetPath: string) => {
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
+    if (draggedPath && draggedPath !== targetPath) {
+      setDragOverPath(targetPath)
+    }
   }
 
   const handleDrop = (e: React.DragEvent, targetPath: string) => {
     e.preventDefault()
     e.stopPropagation()
-    
+
     if (draggedPath && draggedPath !== targetPath) {
       moveField(draggedPath, targetPath)
     }
-    
-    // Remove drag-over styling
-    if (e.currentTarget instanceof HTMLElement) {
-      e.currentTarget.classList.remove('border-blue-400', 'bg-blue-50')
-    }
+
+    setDragOverPath(null)
   }
 
-  const handleDragEnter = (e: React.DragEvent, targetPath: string) => {
+  const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault()
-    if (draggedPath && draggedPath !== targetPath) {
-      if (e.currentTarget instanceof HTMLElement) {
-        e.currentTarget.classList.add('border-blue-400', 'bg-blue-50')
-      }
-    }
   }
 
-  const handleDragLeave = (e: React.DragEvent) => {
-    if (e.currentTarget instanceof HTMLElement) {
-      e.currentTarget.classList.remove('border-blue-400', 'bg-blue-50')
+  const handleDragLeave = (e: React.DragEvent, targetPath: string) => {
+    e.preventDefault()
+    if (dragOverPath === targetPath) {
+      setDragOverPath(null)
     }
   }
 
@@ -251,13 +294,13 @@ export default function CreateSchemaModal({ isOpen, onClose, onSuccess, initialD
           name: field.name,
           type: field.type,
           description: field.description,
-          required: false
+          required: field.required || false
         }
-        
+
         if ((field.type === 'object' || field.type === 'list[object]') && field.nested_fields && field.nested_fields.length > 0) {
           fieldSchema.nested_fields = field.nested_fields.map(buildFieldSchema)
         }
-        
+
         return fieldSchema
       }
       
@@ -298,11 +341,12 @@ export default function CreateSchemaModal({ isOpen, onClose, onSuccess, initialD
     onSuccess: (newSchema) => {
       queryClient.invalidateQueries({ queryKey: ['schemas'] })
       onSuccess(newSchema.id)
+      clearDraft()
       onClose()
       // Reset form
       setName('')
       setDescription('')
-      setFields([{ name: 'field_1', type: 'string', description: '', nested_fields: [] }])
+      setFields([{ name: 'field_1', type: 'string', description: '', required: false, nested_fields: [] }])
       setExpandedFields(new Set())
     },
     onError: (err: any) => {
@@ -318,23 +362,33 @@ export default function CreateSchemaModal({ isOpen, onClose, onSuccess, initialD
           const hasNested = field.type === 'object' || field.type === 'list[object]'
           const isExpanded = expandedFields.has(currentPath)
           const canRemove = level === 0 ? fields.length > 1 : true
-          
+          const isDragging = draggedPath === currentPath
+          const isDraggedOver = dragOverPath === currentPath
+
           return (
             <div key={currentPath} className="space-y-2">
-              <div 
-                className="flex items-start gap-2 group bg-white p-4 rounded-lg border border-gray-200 hover:border-blue-200 transition-all cursor-move"
+              <div
+                className={`flex items-start gap-2 group bg-white p-4 rounded-lg border-2 transition-all cursor-move ${
+                  isDragging
+                    ? 'opacity-40 border-blue-400 shadow-lg scale-[0.98]'
+                    : isDraggedOver
+                    ? 'border-blue-500 bg-blue-50 shadow-md scale-[1.02]'
+                    : 'border-gray-200 hover:border-blue-300 hover:shadow-sm'
+                }`}
                 style={{ marginLeft: `${level * 24}px` }}
                 draggable
                 onDragStart={(e) => handleDragStart(e, currentPath)}
                 onDragEnd={handleDragEnd}
-                onDragOver={handleDragOver}
+                onDragOver={(e) => handleDragOver(e, currentPath)}
                 onDrop={(e) => handleDrop(e, currentPath)}
-                onDragEnter={(e) => handleDragEnter(e, currentPath)}
-                onDragLeave={handleDragLeave}
+                onDragEnter={handleDragEnter}
+                onDragLeave={(e) => handleDragLeave(e, currentPath)}
               >
                 {/* Drag Handle */}
-                <div className="mt-6 p-1 text-gray-400 cursor-grab active:cursor-grabbing" title="Drag to reorder">
-                  <GripVertical className="h-4 w-4" />
+                <div className={`mt-6 p-1 rounded cursor-grab active:cursor-grabbing transition-colors ${
+                  isDragging ? 'text-blue-600 bg-blue-100' : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
+                }`} title="Drag to reorder">
+                  <GripVertical className="h-5 w-5" />
                 </div>
                 {/* Expand/Collapse button for nested types */}
                 {hasNested ? (
@@ -346,51 +400,70 @@ export default function CreateSchemaModal({ isOpen, onClose, onSuccess, initialD
                     {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                   </button>
                 ) : (
-                  <div className="w-8" /> 
+                  <div className="w-8" />
                 )}
-                
-                <div className="flex-1 grid grid-cols-12 gap-3">
-                  {/* Field Name */}
-                  <div className="col-span-4">
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Field Name</label>
-                    <input
-                      type="text"
-                      className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 font-mono bg-gray-50 transition-all"
-                      placeholder="field_name"
-                      value={field.name}
-                      onChange={(e) => updateField(currentPath, 'name', e.target.value)}
-                    />
+
+                <div className="flex-1 space-y-3">
+                  <div className="grid grid-cols-12 gap-3">
+                    {/* Field Name */}
+                    <div className="col-span-4">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Field Name</label>
+                      <input
+                        type="text"
+                        className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 font-mono bg-gray-50 transition-all"
+                        placeholder="field_name"
+                        value={field.name}
+                        onChange={(e) => updateField(currentPath, 'name', e.target.value)}
+                      />
+                    </div>
+                    {/* Type */}
+                    <div className="col-span-3">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Type</label>
+                      <select
+                        className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 transition-all"
+                        value={field.type}
+                        onChange={(e) => updateField(currentPath, 'type', e.target.value as FieldType)}
+                      >
+                        <option value="string">Text</option>
+                        <option value="number">Number</option>
+                        <option value="date">Date</option>
+                        <option value="boolean">Yes/No</option>
+                        <option value="list[string]">List (Text)</option>
+                        <option value="object">Object</option>
+                        <option value="list[object]">List (Objects)</option>
+                      </select>
+                    </div>
+                    {/* Description */}
+                    <div className="col-span-5">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
+                      <input
+                        type="text"
+                        className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 transition-all"
+                        placeholder="e.g. Total amount at bottom"
+                        value={field.description}
+                        onChange={(e) => updateField(currentPath, 'description', e.target.value)}
+                      />
+                    </div>
                   </div>
-                  {/* Type */}
-                  <div className="col-span-3">
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Type</label>
-                    <select
-                      className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 transition-all"
-                      value={field.type}
-                      onChange={(e) => updateField(currentPath, 'type', e.target.value as FieldType)}
+
+                  {/* Required Checkbox */}
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id={`required-${currentPath}`}
+                      checked={field.required || false}
+                      onChange={(e) => updateField(currentPath, 'required', e.target.checked)}
+                      className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 cursor-pointer"
+                    />
+                    <label
+                      htmlFor={`required-${currentPath}`}
+                      className="text-sm text-gray-700 cursor-pointer select-none"
                     >
-                      <option value="string">Text</option>
-                      <option value="number">Number</option>
-                      <option value="date">Date</option>
-                      <option value="boolean">Yes/No</option>
-                      <option value="list[string]">List (Text)</option>
-                      <option value="object">Object</option>
-                      <option value="list[object]">List (Objects)</option>
-                    </select>
-                  </div>
-                  {/* Description */}
-                  <div className="col-span-5">
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
-                    <input
-                      type="text"
-                      className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 transition-all"
-                      placeholder="e.g. Total amount at bottom"
-                      value={field.description}
-                      onChange={(e) => updateField(currentPath, 'description', e.target.value)}
-                    />
+                      Required field
+                    </label>
                   </div>
                 </div>
-                
+
                 <button
                   onClick={() => removeField(currentPath)}
                   className="mt-6 p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
@@ -431,7 +504,7 @@ export default function CreateSchemaModal({ isOpen, onClose, onSuccess, initialD
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between p-8 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
+        <div className="flex items-center justify-between p-8 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-cyan-50">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-blue-100 rounded-xl">
               <Sparkles className="h-6 w-6 text-blue-600" />
@@ -441,12 +514,35 @@ export default function CreateSchemaModal({ isOpen, onClose, onSuccess, initialD
               <p className="text-sm text-gray-600 mt-1">{existingSchemaId ? 'Modify your template fields and settings' : 'Define what data you want to extract from your documents'}</p>
             </div>
           </div>
-          <button 
-            onClick={onClose} 
-            className="text-gray-400 hover:text-gray-600 hover:bg-white rounded-lg p-2 transition-all"
-          >
-            <X className="h-6 w-6" />
-          </button>
+          <div className="flex items-center gap-2">
+            {hasDraft && !initialData && !existingSchemaId && (
+              <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                <Archive className="h-4 w-4 text-amber-600" />
+                <span className="text-xs font-medium text-amber-700">Draft saved</span>
+                <div className="flex gap-1">
+                  <button
+                    onClick={loadDraft}
+                    className="text-xs font-medium text-amber-700 hover:text-amber-800 underline"
+                  >
+                    Restore
+                  </button>
+                  <span className="text-amber-400">•</span>
+                  <button
+                    onClick={clearDraft}
+                    className="text-xs font-medium text-amber-700 hover:text-amber-800 underline"
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
+            )}
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600 hover:bg-white rounded-lg p-2 transition-all"
+            >
+              <X className="h-6 w-6" />
+            </button>
+          </div>
         </div>
 
         {/* Body (Scrollable) */}
