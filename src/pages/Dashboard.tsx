@@ -6,7 +6,7 @@ import { uploadDocument } from '../lib/api'
 import Dropzone from '../components/Dropzone'
 import CreateSchemaModal, { SchemaData } from '../components/CreateSchemaModal'
 import SuccessModal from '../components/SuccessModal'
-import { Loader2, Plus, ChevronRight, Sparkles, FileText, AlertCircle, Copy, Clock, TrendingUp, Zap, CheckCircle2, XCircle } from 'lucide-react'
+import { Loader2, Plus, ChevronRight, Sparkles, FileText, AlertCircle, Copy, Clock, TrendingUp, Zap, CheckCircle2, XCircle, Type, Hash, Calendar, ToggleLeft, List, Box, Check } from 'lucide-react'
 
 type FileStatus = 'pending' | 'processing' | 'completed' | 'error'
 
@@ -14,6 +14,48 @@ interface FileProcessingStatus {
   file: File
   status: FileStatus
   error?: string
+}
+
+const getFieldTypeIcon = (type: string) => {
+  switch (type) {
+    case 'string':
+      return <Type className="h-3.5 w-3.5" />
+    case 'number':
+      return <Hash className="h-3.5 w-3.5" />
+    case 'date':
+      return <Calendar className="h-3.5 w-3.5" />
+    case 'boolean':
+      return <ToggleLeft className="h-3.5 w-3.5" />
+    case 'list[string]':
+      return <List className="h-3.5 w-3.5" />
+    case 'object':
+      return <Box className="h-3.5 w-3.5" />
+    case 'list[object]':
+      return <List className="h-3.5 w-3.5" />
+    default:
+      return <Type className="h-3.5 w-3.5" />
+  }
+}
+
+const getFieldTypeLabel = (type: string) => {
+  switch (type) {
+    case 'string':
+      return 'Text'
+    case 'number':
+      return 'Number'
+    case 'date':
+      return 'Date'
+    case 'boolean':
+      return 'Yes/No'
+    case 'list[string]':
+      return 'List'
+    case 'object':
+      return 'Object'
+    case 'list[object]':
+      return 'List (Objects)'
+    default:
+      return type
+  }
 }
 
 export default function Dashboard() {
@@ -358,41 +400,23 @@ export default function Dashboard() {
         {/* Step 2: Select Template */}
         {files.length > 0 && (
           <div className="p-8 border-b border-gray-100 bg-gradient-to-br from-gray-50 to-white animate-in slide-in-from-top-2">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-dark shadow-sm">
-                2
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-dark shadow-sm">
+                  2
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Choose Template</h2>
+                  <p className="text-sm text-gray-500">Select or create an extraction schema</p>
+                </div>
               </div>
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">Choose Template</h2>
-                <p className="text-sm text-gray-500">Select or create an extraction schema</p>
-              </div>
-            </div>
-            
-            <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-end">
-              <div className="flex-1">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Extraction Schema</label>
-                <select
-                  className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-primary focus:ring-2 focus:ring-primary/50 text-sm p-3 border transition-all"
-                  value={selectedSchemaId}
-                  onChange={(e) => setSelectedSchemaId(e.target.value)}
-                >
-                  <option value="">✨ Auto-detect (Generic)</option>
-                  {schemas?.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} {s.is_public ? '• System' : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              
-              <div className="hidden sm:flex items-center pb-3 text-gray-400 text-sm font-medium">OR</div>
 
               <div className="flex gap-2">
                 {selectedSchemaId && (
-                   <button
+                  <button
                     onClick={openCloneModal}
                     title="Clone & Edit Template"
-                    className="flex items-center gap-2 rounded-lg bg-white px-4 py-3 text-sm font-medium text-gray-700 shadow-sm border border-gray-300 hover:bg-gray-50 hover:border-gray-400 transition-all"
+                    className="flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm border border-gray-300 hover:bg-gray-50 hover:border-gray-400 transition-all"
                   >
                     <Copy className="h-4 w-4" />
                     Clone
@@ -401,12 +425,137 @@ export default function Dashboard() {
 
                 <button
                   onClick={openCreateModal}
-                  className="flex items-center gap-2 rounded-lg bg-primary px-4 py-3 text-sm font-medium text-dark shadow-sm hover:bg-primary-600 transition-all"
+                  className="flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-dark shadow-sm hover:bg-primary-600 transition-all"
                 >
                   <Plus className="h-4 w-4" />
                   New Template
                 </button>
               </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {/* Auto-detect Card */}
+              <button
+                onClick={() => setSelectedSchemaId('')}
+                className={`relative text-left p-5 rounded-xl border-2 transition-all group hover:shadow-md ${
+                  selectedSchemaId === ''
+                    ? 'border-green-500 bg-gradient-to-br from-green-50 to-emerald-50 shadow-md'
+                    : 'border-gray-200 bg-white hover:border-green-300'
+                }`}
+              >
+                {selectedSchemaId === '' && (
+                  <div className="absolute top-3 right-3">
+                    <div className="bg-green-500 rounded-full p-1">
+                      <Check className="h-3 w-3 text-white" />
+                    </div>
+                  </div>
+                )}
+                <div className="flex items-start gap-3 mb-3">
+                  <div className={`p-2.5 rounded-lg transition-all ${
+                    selectedSchemaId === ''
+                      ? 'bg-green-500 text-white'
+                      : 'bg-gradient-to-br from-green-100 to-emerald-100 text-green-600 group-hover:from-green-200 group-hover:to-emerald-200'
+                  }`}>
+                    <Sparkles className="h-5 w-5" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-gray-900 text-sm mb-1">Auto-detect</h3>
+                    <p className="text-xs text-gray-600 leading-relaxed">
+                      AI automatically detects and extracts all key information
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 text-xs font-medium text-green-600">
+                  <Sparkles className="h-3 w-3" />
+                  Generic extraction
+                </div>
+              </button>
+
+              {/* Template Cards */}
+              {schemas?.map(schema => {
+                const fields = schema.content?.fields || []
+                const fieldCount = fields.length
+                const maxPreviewFields = 4
+
+                return (
+                  <button
+                    key={schema.id}
+                    onClick={() => setSelectedSchemaId(schema.id)}
+                    className={`relative text-left p-5 rounded-xl border-2 transition-all group hover:shadow-md ${
+                      selectedSchemaId === schema.id
+                        ? 'border-blue-500 bg-gradient-to-br from-blue-50 to-cyan-50 shadow-md'
+                        : 'border-gray-200 bg-white hover:border-blue-300'
+                    }`}
+                  >
+                    {selectedSchemaId === schema.id && (
+                      <div className="absolute top-3 right-3">
+                        <div className="bg-blue-500 rounded-full p-1">
+                          <Check className="h-3 w-3 text-white" />
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-start gap-3 mb-3">
+                      <div className={`p-2.5 rounded-lg transition-all ${
+                        selectedSchemaId === schema.id
+                          ? 'bg-blue-500 text-white'
+                          : 'bg-gradient-to-br from-blue-100 to-cyan-100 text-blue-600 group-hover:from-blue-200 group-hover:to-cyan-200'
+                      }`}>
+                        <FileText className="h-5 w-5" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold text-gray-900 text-sm mb-1 truncate pr-6">
+                          {schema.name}
+                        </h3>
+                        {schema.description && (
+                          <p className="text-xs text-gray-600 line-clamp-2 leading-relaxed">
+                            {schema.description}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Field Preview */}
+                    {fieldCount > 0 && (
+                      <div className="space-y-1.5 mb-3">
+                        {fields.slice(0, maxPreviewFields).map((field: any, idx: number) => (
+                          <div
+                            key={idx}
+                            className="flex items-center gap-2 text-xs bg-gray-50 rounded-md px-2 py-1.5 border border-gray-100"
+                          >
+                            <div className="text-gray-500">
+                              {getFieldTypeIcon(field.type)}
+                            </div>
+                            <span className="font-medium text-gray-700 truncate flex-1">
+                              {field.name}
+                            </span>
+                            <span className="text-gray-500 text-[10px] uppercase tracking-wide">
+                              {getFieldTypeLabel(field.type)}
+                            </span>
+                          </div>
+                        ))}
+                        {fieldCount > maxPreviewFields && (
+                          <div className="text-xs text-gray-500 italic px-2">
+                            +{fieldCount - maxPreviewFields} more field{fieldCount - maxPreviewFields > 1 ? 's' : ''}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Footer */}
+                    <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+                      <span className="text-xs font-medium text-gray-600">
+                        {fieldCount} field{fieldCount !== 1 ? 's' : ''}
+                      </span>
+                      {schema.is_public && (
+                        <span className="text-[10px] font-medium bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full uppercase tracking-wide">
+                          System
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           </div>
         )}
