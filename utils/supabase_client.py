@@ -1,16 +1,15 @@
-import os
-from supabase import create_client, Client
-from dotenv import load_dotenv
+from typing import Protocol, Any
 
-load_dotenv()
 
-url: str = os.environ.get("SUPABASE_URL")
-key: str = os.environ.get("SUPABASE_SERVICE_KEY")
+class _NoOpSupabaseClient(Protocol):
+    """Minimal stub client to keep legacy imports working without Supabase."""
 
-if not url or not key:
-    raise ValueError("Supabase credentials not found in .env file. Ensure SUPABASE_URL and SUPABASE_SERVICE_KEY are set.")
+    def __getattr__(self, name: str) -> Any:  # pragma: no cover - simple fallback
+        raise RuntimeError("Supabase is no longer used in this project.")
 
-supabase: Client = create_client(url, key)
 
-def get_supabase() -> Client:
-    return supabase
+_client: _NoOpSupabaseClient = object()  # type: ignore[assignment]
+
+
+def get_supabase() -> _NoOpSupabaseClient:
+    return _client
