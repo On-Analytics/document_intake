@@ -1,0 +1,84 @@
+{
+  "document_type": "resume",
+  "description": "General schema for CV / resume documents.",
+  "fields": [
+    {
+      "name": "candidate_name",
+      "type": "string",
+      "required": false,
+      "description": "Full name of the candidate."
+    },
+    {
+      "name": "contact_email",
+      "type": "string",
+      "required": false,
+      "description": "Candidate email address."
+    },
+    {
+      "name": "contact_phone",
+      "type": "string",
+      "required": false,
+      "description": "Candidate phone number."
+    },
+    {
+      "name": "location",
+      "type": "string",
+      "required": false,
+      "description": "City, region, or country of the candidate if available."
+    },
+    {
+      "name": "headline",
+      "type": "string",
+      "required": false,
+      "description": "Short title or headline summarizing the candidate (e.g., 'Senior Data Scientist')."
+    },
+    {
+      "name": "summary",
+      "type": "string",
+      "required": false,
+      "description": "Professional summary or objective section."
+    },
+    {
+      "name": "skills",
+      "type": "list[string]",
+      "required": false,
+      "description": "List of key skills or technologies."
+    },
+    {
+      "name": "work_experience",
+      "type": "list[object]",
+      "required": false,
+      "description": "List of jobs or roles. Each may include employer, title, start_date, end_date, responsibilities."
+    },
+    {
+      "name": "education",
+      "type": "list[object]",
+      "required": false,
+      "description": "List of educational records (institution, degree, field_of_study, start_date, end_date)."
+    },
+    {
+      "name": "certifications",
+      "type": "list[string]",
+      "required": false,
+      "description": "Relevant certifications or licenses."
+    },
+    {
+      "name": "languages",
+      "type": "list[string]",
+      "required": false,
+      "description": "Languages spoken (e.g., 'English - Native', 'Spanish - Intermediate')."
+    },
+    {
+      "name": "projects",
+      "type": "list[object]",
+      "required": false,
+      "description": "Key projects or portfolio items mentioned in the resume."
+    },
+    {
+      "name": "links",
+      "type": "list[string]",
+      "required": false,
+      "description": "URLs such as LinkedIn, GitHub, portfolio, or personal website."
+    }
+  ]
+}

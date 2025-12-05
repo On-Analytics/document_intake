@@ -1,0 +1,21 @@
+{
+  "document_type": "invoice",
+  "description": "General schema for B2B/B2C invoices.",
+  "fields": [
+    {"name": "invoice_number", "type": "string", "required": false, "description": "Invoice identifier or reference number."},
+    {"name": "invoice_date", "type": "date", "required": false, "description": "Date the invoice was issued."},
+    {"name": "due_date", "type": "date", "required": false, "description": "Payment due date if present."},
+    {"name": "seller_name", "type": "string", "required": false, "description": "Name of the seller/vendor/issuer."},
+    {"name": "seller_address", "type": "string", "required": false, "description": "Address or contact details of the seller."},
+    {"name": "buyer_name", "type": "string", "required": false, "description": "Name of the buyer/customer."},
+    {"name": "buyer_address", "type": "string", "required": false, "description": "Address or contact details of the buyer."},
+    {"name": "line_items", "type": "list[object]", "required": false, "description": "List of line items (products or services). Each item may include description, quantity, unit_price, tax, line_total."},
+    {"name": "subtotal", "type": "number", "required": false, "description": "Subtotal amount before tax and discounts."},
+    {"name": "tax_amount", "type": "number", "required": false, "description": "Total tax amount on the invoice."},
+    {"name": "discount_amount", "type": "number", "required": false, "description": "Total discount amount if present."},
+    {"name": "total_amount", "type": "number", "required": false, "description": "Grand total amount to be paid."},
+    {"name": "currency", "type": "string", "required": false, "description": "Currency code for monetary amounts (e.g., USD, EUR)."},
+    {"name": "payment_terms", "type": "string", "required": false, "description": "Payment terms such as Net 30, immediate, partial payments, etc."},
+    {"name": "payment_instructions", "type": "string", "required": false, "description": "Bank details, payment links, or instructions for how to pay."}
+  ]
+}
