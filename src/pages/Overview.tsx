@@ -75,7 +75,7 @@ export default function Overview() {
     <div className="flex flex-col min-h-screen">
       {/* Page Header */}
       <div className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-10">
-        <div className="px-4 sm:px-6 lg:px-8 py-6">
+        <div className="px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center gap-4">
             <div className="p-3 bg-gradient-to-br from-blue-500 to-indigo-500 rounded-2xl shadow-lg">
               <LayoutDashboard className="h-7 w-7 text-white" />
