@@ -4,18 +4,13 @@ import os
 from pathlib import Path
 from typing import Dict, Any
 
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 import json
 
-# Import custom modules
-from auth import get_current_user, UserContext
-from utils.supabase_client import get_supabase
-from supabase import Client
 from router import route_document
-from orchestrator import run_workflow
 from langchain_community.document_loaders import PDFPlumberLoader
 from langchain_core.documents import Document
 
@@ -33,6 +28,8 @@ app.add_middleware(
 
 # Response Models
 class ProcessResponse(BaseModel):
+    status: str
+    document_id: str
     results: Dict[str, Any]
     operational_metadata: Dict[str, Any]
 
@@ -43,14 +40,12 @@ async def root():
 @app.post("/process", response_model=ProcessResponse)
 async def process_document(
     file: UploadFile = File(...),
-    schema_id: Optional[str] = Form(None),
-    current_user: UserContext = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase)
+    schema_id: Optional[str] = Form(None)
 ):
     """
-    Upload a file, process it immediately, log the event, and return results.
+    Upload a file, process it immediately, and return results.
     """
-    print(f"User {current_user.email} (Tenant: {current_user.tenant_id}) uploading {file.filename}")
+    print(f"Processing {file.filename}")
 
     # 1. Save to Temp File (Required for PDF loaders usually)
     suffix = Path(file.filename).suffix
@@ -65,27 +60,27 @@ async def process_document(
         # Check file extension
         is_pdf = suffix.lower() == ".pdf"
         is_image = suffix.lower() in [".png", ".jpg", ".jpeg"]
-        
+
         if is_pdf:
             # Simplified loading logic for now
             loader = PDFPlumberLoader(tmp_path)
             docs = loader.load()
-            
+
             if not docs:
                 raise HTTPException(status_code=400, detail="Could not extract text from document")
-                
+
             # Combine pages for routing analysis
             full_text = "\n".join([d.page_content for d in docs])
             # Create a LangChain document for the router
             router_doc = Document(page_content=full_text, metadata={"source": file.filename})
-            
+
             # 3. Determine Workflow
             route = route_document(router_doc)
             doc_type = route.get("document_type", "generic")
             workflow_name = route.get("workflow", "basic")
-            
+
             print(f"Router decided: Type={doc_type}, Workflow={workflow_name}")
-            
+
         elif is_image:
             print(f"Image detected: {file.filename}. Skipping text extraction and forcing Balanced workflow.")
             # For images, we can't easily extract text for the router without OCR.
@@ -93,58 +88,51 @@ async def process_document(
             router_doc = Document(page_content="", metadata={"source": file.filename})
             doc_type = "generic"
             workflow_name = "balanced"
-            
+
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {suffix}")
 
         # 4. Select Schema
+        # Load schema from templates directory
+        templates_dir = Path(__file__).parent / "templates"
+
         if schema_id:
-            print(f"Using Custom Schema ID: {schema_id}")
-            # Fetch schema from DB
-            schema_res = supabase.table("schemas").select("content").eq("id", schema_id).single().execute()
-            if not schema_res.data:
+            # Use custom schema (would need to be stored locally)
+            schema_file = templates_dir / f"{schema_id}.json"
+            if not schema_file.exists():
                 raise HTTPException(status_code=404, detail="Schema not found")
-            
-            schema_content = schema_res.data["content"]
+
+            with schema_file.open("r") as f:
+                schema_content = json.load(f)
         else:
-            # AUTO-DETECT: Fetch System Template from DB based on Router Result
+            # AUTO-DETECT: Use template based on Router Result
             print(f"Auto-detecting schema for type: {doc_type}")
-            
-            # Map router types to schema types if necessary (e.g. receipt -> invoice)
+
+            # Map router types to schema files
             type_mapping = {
                 "receipt": "invoice",
-                # Add others if needed
+                "invoice": "invoice",
+                "claim": "claim",
+                "resume": "resume",
             }
-            target_type = type_mapping.get(doc_type, doc_type)
-            
-            # Query DB for a public schema matching this document_type
-            # We use JSON containment operator to find content->'document_type' == target_type
-            schema_res = supabase.table("schemas") \
-                .select("content") \
-                .eq("is_public", True) \
-                .contains("content", {"document_type": target_type}) \
-                .limit(1) \
-                .execute()
-                
-            if schema_res.data and len(schema_res.data) > 0:
-                print(f"Found System Schema for '{target_type}' in DB")
-                schema_content = schema_res.data[0]["content"]
-            else:
-                print(f"No system schema found for '{target_type}', falling back to Claim/Generic")
-                # Fallback to Claim schema from DB if specific one not found
-                fallback_res = supabase.table("schemas") \
-                    .select("content") \
-                    .eq("is_public", True) \
-                    .contains("content", {"document_type": "claim"}) \
-                    .limit(1) \
-                    .execute()
-                
-                if fallback_res.data:
-                    schema_content = fallback_res.data[0]["content"]
-                else:
-                    raise HTTPException(status_code=404, detail="No appropriate schema found in database")
+            target_type = type_mapping.get(doc_type, "claim")
 
-        # Write Schema to Temp File (Common for both paths)
+            schema_file = templates_dir / f"{target_type}_schema.json"
+
+            if schema_file.exists():
+                print(f"Found template schema for '{target_type}'")
+                with schema_file.open("r") as f:
+                    schema_content = json.load(f)
+            else:
+                # Fallback to claim schema
+                print(f"No template found for '{target_type}', falling back to claim")
+                schema_file = templates_dir / "claim_schema.json"
+                if not schema_file.exists():
+                    raise HTTPException(status_code=404, detail="No appropriate schema found")
+                with schema_file.open("r") as f:
+                    schema_content = json.load(f)
+
+        # Write Schema to Temp File
         # Extractors expect a file path, so we dump the JSON content to a temp file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".json", mode="w", encoding="utf-8") as tmp_schema:
             json.dump(schema_content, tmp_schema)
@@ -156,7 +144,7 @@ async def process_document(
         from extractors.extract_fields_basic import extract_fields_basic
         from extractors.extract_fields_balanced import extract_fields_balanced
         from extractors.vision_generate_markdown import vision_generate_markdown
-        
+
         # Create metadata object required by extractors
         doc_metadata = DocumentMetadata(
             document_number="api-request",
@@ -167,11 +155,11 @@ async def process_document(
         )
 
         extraction_result = {}
-        
+
         if workflow_name == "balanced":
             # Vision + Text Extraction
             print(f"Running Balanced extraction (Vision + Text) for {file.filename}")
-            
+
             # Step 1: Generate Markdown via Vision
             vision_result = vision_generate_markdown(
                 document=router_doc,
@@ -200,36 +188,25 @@ async def process_document(
                 document_type=doc_type
             )
 
-        # 6. Log to Supabase (Stateless Mode)
+        # 6. Build Response
         op_metadata = {
             "page_count": len(docs) if is_pdf else 1,
             "doc_type": doc_type,
             "workflow": workflow_name,
             "source": "api_upload"
         }
-        
-        db_res = supabase.table("documents").insert({
-            "tenant_id": current_user.tenant_id,
-            "filename": file.filename,
-            "storage_path": None,
-            "status": "completed",
-            "file_size": os.path.getsize(tmp_path),
-            "metadata": op_metadata
-        }).execute()
-        
-        doc_id = db_res.data[0]['id'] if db_res.data else "unknown"
 
         return ProcessResponse(
             status="success",
-            document_id=doc_id,
-            results=extraction_result, # This would be the actual AI output
+            document_id="no-persistence",
+            results=extraction_result,
             operational_metadata=op_metadata
         )
 
     except Exception as e:
         print(f"Processing Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-        
+
     finally:
         # Cleanup temp file
         if os.path.exists(tmp_path):
