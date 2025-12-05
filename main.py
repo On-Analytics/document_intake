@@ -40,10 +40,12 @@ async def root():
 @app.post("/process", response_model=ProcessResponse)
 async def process_document(
     file: UploadFile = File(...),
-    schema_id: Optional[str] = Form(None)
+    schema_id: Optional[str] = Form(None),
+    schema_content: Optional[str] = Form(None)
 ):
     """
     Upload a file, process it immediately, and return results.
+    schema_content: Optional JSON string containing the full schema
     """
     print(f"Processing {file.filename}")
 
@@ -96,14 +98,23 @@ async def process_document(
         # Load schema from templates directory
         templates_dir = Path(__file__).parent / "templates"
 
-        if schema_id:
-            # Use custom schema (would need to be stored locally)
+        schema_dict = None
+
+        if schema_content:
+            # Use schema content provided from frontend
+            print(f"Using custom schema content provided from frontend")
+            try:
+                schema_dict = json.loads(schema_content)
+            except json.JSONDecodeError as e:
+                raise HTTPException(status_code=400, detail=f"Invalid schema JSON: {str(e)}")
+        elif schema_id:
+            # Try to load schema file by ID (legacy support)
             schema_file = templates_dir / f"{schema_id}.json"
             if not schema_file.exists():
                 raise HTTPException(status_code=404, detail="Schema not found")
 
             with schema_file.open("r") as f:
-                schema_content = json.load(f)
+                schema_dict = json.load(f)
         else:
             # AUTO-DETECT: Use template based on Router Result
             print(f"Auto-detecting schema for type: {doc_type}")
@@ -122,7 +133,7 @@ async def process_document(
             if schema_file.exists():
                 print(f"Found template schema for '{target_type}'")
                 with schema_file.open("r") as f:
-                    schema_content = json.load(f)
+                    schema_dict = json.load(f)
             else:
                 # Fallback to claim schema
                 print(f"No template found for '{target_type}', falling back to claim")
@@ -130,12 +141,12 @@ async def process_document(
                 if not schema_file.exists():
                     raise HTTPException(status_code=404, detail="No appropriate schema found")
                 with schema_file.open("r") as f:
-                    schema_content = json.load(f)
+                    schema_dict = json.load(f)
 
         # Write Schema to Temp File
         # Extractors expect a file path, so we dump the JSON content to a temp file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".json", mode="w", encoding="utf-8") as tmp_schema:
-            json.dump(schema_content, tmp_schema)
+            json.dump(schema_dict, tmp_schema)
             temp_schema_path = tmp_schema.name
             schema_path = Path(temp_schema_path)
 
