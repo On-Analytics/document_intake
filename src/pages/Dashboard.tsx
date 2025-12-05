@@ -5,7 +5,8 @@ import { supabase } from '../lib/supabase'
 import { uploadDocument } from '../lib/api'
 import Dropzone from '../components/Dropzone'
 import CreateSchemaModal, { SchemaData } from '../components/CreateSchemaModal'
-import { Loader2, Plus, ChevronRight, Sparkles, FileText, AlertCircle, Copy } from 'lucide-react'
+import SuccessModal from '../components/SuccessModal'
+import { Loader2, Plus, ChevronRight, Sparkles, FileText, AlertCircle, Copy, Clock, TrendingUp, Zap, CheckCircle2 } from 'lucide-react'
 
 export default function Dashboard() {
   const navigate = useNavigate()
@@ -19,21 +20,54 @@ export default function Dashboard() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [modalInitialData, setModalInitialData] = useState<SchemaData | null>(null)
 
+  // Success Modal State
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
+  const [processedFilesCount, setProcessedFilesCount] = useState(0)
+
   // Fetch Schemas
   const { data: schemas, refetch: refetchSchemas } = useQuery({
     queryKey: ['schemas'],
     queryFn: async () => {
-      // Fetch content too so we can clone it
       const { data, error } = await supabase
         .from('schemas')
         .select('id, name, is_public, description, content')
         .order('is_public', { ascending: false })
         .order('name')
-      
+
       if (error) throw error
       return data
     }
   })
+
+  // Fetch Recent Extractions for stats
+  const { data: recentExtractions } = useQuery({
+    queryKey: ['recentExtractions'],
+    queryFn: async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return []
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('tenant_id')
+        .eq('id', user.id)
+        .single()
+
+      if (!profile) return []
+
+      const { data, error } = await supabase
+        .from('extraction_results')
+        .select('id, filename, created_at, status, schema_name')
+        .eq('tenant_id', profile.tenant_id)
+        .order('created_at', { ascending: false })
+        .limit(3)
+
+      if (error) throw error
+      return data || []
+    }
+  })
+
+  // Calculate stats
+  const totalExtractions = recentExtractions?.length || 0
 
   const handleExtract = async () => {
     if (files.length === 0) return
@@ -133,8 +167,11 @@ export default function Dashboard() {
         setErrorMsg(`Failed to process: ${failedFiles}`)
         setStatus('idle')
       } else {
-        // All successful - redirect to results page
-        navigate('/history')
+        // All successful - show success modal
+        setStatus('idle')
+        setProcessedFilesCount(files.length)
+        setShowSuccessModal(true)
+        handleReset()
       }
     } catch (err: any) {
       console.error('Fatal error during extraction:', err)
@@ -179,13 +216,93 @@ export default function Dashboard() {
     <div className="max-w-5xl mx-auto space-y-6 -mt-20">
       {/* Header */}
       <div className="text-center space-y-3">
-        <div className="inline-flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-full text-sm font-medium">
+        <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-500/10 to-emerald-500/10 text-green-700 rounded-full text-sm font-medium shadow-sm">
           <Sparkles className="h-4 w-4" />
           AI-Powered Extraction
         </div>
         <h1 className="text-4xl font-bold text-gray-900">Extract Data</h1>
         <p className="text-gray-600 text-lg max-w-2xl mx-auto">Upload your documents, select a template, and let AI extract structured data in seconds.</p>
       </div>
+
+      {/* Quick Stats - Only show if user has extractions */}
+      {files.length === 0 && recentExtractions && recentExtractions.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 rounded-xl p-5 border border-blue-200">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-blue-500 rounded-lg">
+                <FileText className="h-5 w-5 text-white" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-gray-900">{totalExtractions}</p>
+                <p className="text-sm text-gray-600">Recent Files</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-gradient-to-br from-green-50 to-emerald-100/50 rounded-xl p-5 border border-green-200">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-green-500 rounded-lg">
+                <Zap className="h-5 w-5 text-white" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-gray-900">{schemas?.length || 0}</p>
+                <p className="text-sm text-gray-600">Templates</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-gradient-to-br from-amber-50 to-orange-100/50 rounded-xl p-5 border border-amber-200">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-amber-500 rounded-lg">
+                <TrendingUp className="h-5 w-5 text-white" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-gray-900">100%</p>
+                <p className="text-sm text-gray-600">Success Rate</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Recent Activity - Only show when no files selected */}
+      {files.length === 0 && recentExtractions && recentExtractions.length > 0 && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <Clock className="h-5 w-5 text-gray-500" />
+              Recent Extractions
+            </h3>
+            <button
+              onClick={() => navigate('/history')}
+              className="text-sm font-medium text-green-600 hover:text-green-700 flex items-center gap-1"
+            >
+              View All
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="space-y-2">
+            {recentExtractions.map((extraction) => (
+              <div
+                key={extraction.id}
+                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-all cursor-pointer"
+                onClick={() => navigate('/history')}
+              >
+                <div className="flex items-center gap-3">
+                  <CheckCircle2 className="h-5 w-5 text-green-600" />
+                  <div>
+                    <p className="font-medium text-gray-900 text-sm">{extraction.filename}</p>
+                    <p className="text-xs text-gray-500">
+                      {extraction.schema_name || 'Auto-detected'} • {new Date(extraction.created_at).toLocaleDateString()}
+                    </p>
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 text-gray-400" />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Main Card */}
       <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
@@ -320,6 +437,13 @@ export default function Dashboard() {
           setSelectedSchemaId(newId)
         }}
         initialData={modalInitialData}
+      />
+
+      {/* Success Modal */}
+      <SuccessModal
+        isOpen={showSuccessModal}
+        onClose={() => setShowSuccessModal(false)}
+        filesCount={processedFilesCount}
       />
     </div>
   )
