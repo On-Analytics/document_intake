@@ -72,7 +72,7 @@ export default function Login() {
             Transform documents into<br />structured data instantly
           </h2>
           <p className="text-gray-300 text-lg max-w-md leading-relaxed">
-            Powered by AI to extract, analyze, and organize information from any document with precision and speed.
+            Powered by AI to extract data from your documents with precision
           </p>
           <div className="mt-12 space-y-4">
             <div className="flex items-center gap-3">
