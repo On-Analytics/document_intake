@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useNavigate } from 'react-router-dom'
-import { FileText, Sparkles, Lock, Mail, CheckCircle } from 'lucide-react'
+import { FileText, Sparkles, Lock, CheckCircle } from 'lucide-react'
 
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isSignUp, setIsSignUp] = useState(false)
   const navigate = useNavigate()
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -98,22 +99,22 @@ export default function Login() {
 
       {/* Right Side - Login Form */}
       <div className="flex-1 flex items-center justify-center px-4 sm:px-6 lg:px-8 bg-gray-50">
-        <div className="w-full max-w-md">
-          <div className="bg-white rounded-2xl shadow-xl p-8 sm:p-10 border border-gray-100">
+        <div className="w-full max-w-md space-y-8">
+          <div className="bg-white rounded-2xl shadow-xl p-8 sm:p-12 border border-gray-100">
             {/* Mobile Logo */}
-            <div className="lg:hidden flex items-center justify-center gap-2 mb-8">
+            <div className="lg:hidden flex items-center justify-center gap-2 mb-10">
               <div className="p-2 bg-primary/10 rounded-lg">
                 <FileText className="h-6 w-6 text-primary" />
               </div>
               <h1 className="text-2xl font-bold text-gray-900">On-Documents</h1>
             </div>
 
-            <div className="text-center mb-8">
+            <div className="text-center mb-10">
               <h2 className="text-2xl font-bold text-gray-900">
-                Welcome back
+                {isSignUp ? 'Create your account' : 'Welcome back'}
               </h2>
               <p className="mt-2 text-sm text-gray-600">
-                Sign in to continue to your workspace
+                {isSignUp ? 'Sign up to get started with On-Documents' : 'Sign in to continue to your workspace'}
               </p>
             </div>
             
@@ -123,7 +124,7 @@ export default function Login() {
               </div>
             )}
 
-            <form className="space-y-5" onSubmit={handleLogin}>
+            <form className="space-y-6" onSubmit={handleLogin}>
               <div>
                 <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
                   Email address
@@ -164,27 +165,50 @@ export default function Login() {
                 </div>
               </div>
 
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-dark shadow-md hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                >
-                  {loading ? 'Signing in...' : 'Sign in'}
-                </button>
-                
-                <button
-                  type="button"
-                  onClick={handleSignUp}
-                  disabled={loading}
-                  className="flex-1 flex justify-center items-center px-4 py-3 rounded-lg text-sm font-semibold text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                >
-                  Sign up
-                </button>
+              <div className="pt-4">
+                {isSignUp ? (
+                  <button
+                    type="button"
+                    onClick={handleSignUp}
+                    disabled={loading}
+                    className="w-full rounded-lg bg-primary px-4 py-3.5 text-sm font-semibold text-dark shadow-md hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  >
+                    {loading ? 'Creating account...' : 'Create account'}
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full rounded-lg bg-primary px-4 py-3.5 text-sm font-semibold text-dark shadow-md hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  >
+                    {loading ? 'Signing in...' : 'Sign in'}
+                  </button>
+                )}
               </div>
             </form>
 
-            <div className="mt-6 text-center text-xs text-gray-500">
+            <div className="mt-8 text-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSignUp(!isSignUp)
+                  setError(null)
+                }}
+                className="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
+              >
+                {isSignUp ? (
+                  <>
+                    Already have an account? <span className="text-primary">Sign in</span>
+                  </>
+                ) : (
+                  <>
+                    Don't have an account? <span className="text-primary">Sign up</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="mt-8 text-center text-xs text-gray-500">
               By continuing, you agree to our Terms of Service and Privacy Policy
             </div>
           </div>
