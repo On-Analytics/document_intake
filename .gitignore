@@ -27,16 +27,8 @@ test_doc.txt
 *.pdf
 *.docx
 *.txt
+!requirements.txt
 
 # Node / Frontend
 node_modules/
 dist/
-build/
-.DS_Store
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Supabase / Test Scripts
-test_supabase_flow.py
-test_workflows_direct.py
