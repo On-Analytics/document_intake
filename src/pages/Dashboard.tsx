@@ -271,15 +271,10 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-4 -mt-32">
-      {/* Header */}
-      <div className="text-center space-y-2">
-        <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-500/10 to-emerald-500/10 text-green-700 rounded-full text-sm font-medium shadow-sm">
-          <Sparkles className="h-4 w-4" />
-          AI-Powered Extraction
-        </div>
-        <h1 className="text-3xl font-bold text-gray-900">Extract Data</h1>
-        <p className="text-gray-600 max-w-2xl mx-auto">Upload your documents, select a template, and let AI extract structured data in seconds.</p>
+    <div className="max-w-5xl mx-auto space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold text-gray-900 mb-2">Extract Data</h1>
+        <p className="text-gray-600">Upload your documents, select a template, and let AI extract structured data</p>
       </div>
 
 

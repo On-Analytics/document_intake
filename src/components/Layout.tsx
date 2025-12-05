@@ -1,16 +1,18 @@
 import { useState } from 'react'
 import { Outlet, Link, useLocation, Navigate } from 'react-router-dom'
-import { 
-  Sparkles, 
-  FileText, 
-  LogOut, 
+import {
+  Sparkles,
+  FileText,
+  LogOut,
   Menu,
   X,
-  FolderOpen
+  FolderOpen,
+  LayoutDashboard
 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 const navigation = [
+  { name: 'Overview', href: '/overview', icon: LayoutDashboard },
   { name: 'Extract', href: '/', icon: Sparkles },
   { name: 'Templates', href: '/schemas', icon: FileText },
   { name: 'Results', href: '/history', icon: FolderOpen },
