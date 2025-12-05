@@ -6,7 +6,15 @@ import { uploadDocument } from '../lib/api'
 import Dropzone from '../components/Dropzone'
 import CreateSchemaModal, { SchemaData } from '../components/CreateSchemaModal'
 import SuccessModal from '../components/SuccessModal'
-import { Loader2, Plus, ChevronRight, Sparkles, FileText, AlertCircle, Copy, Clock, TrendingUp, Zap, CheckCircle2 } from 'lucide-react'
+import { Loader2, Plus, ChevronRight, Sparkles, FileText, AlertCircle, Copy, Clock, TrendingUp, Zap, CheckCircle2, XCircle } from 'lucide-react'
+
+type FileStatus = 'pending' | 'processing' | 'completed' | 'error'
+
+interface FileProcessingStatus {
+  file: File
+  status: FileStatus
+  error?: string
+}
 
 export default function Dashboard() {
   const navigate = useNavigate()
@@ -15,6 +23,7 @@ export default function Dashboard() {
   const [status, setStatus] = useState<'idle' | 'processing'>('idle')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [processingProgress, setProcessingProgress] = useState({ current: 0, total: 0 })
+  const [fileStatuses, setFileStatuses] = useState<FileProcessingStatus[]>([])
 
   // New Template Modal State
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -74,22 +83,29 @@ export default function Dashboard() {
 
     console.log('Starting extraction for', files.length, 'files')
     console.log('Selected schema ID:', selectedSchemaId)
-    
+
     setStatus('processing')
     setErrorMsg(null)
     setProcessingProgress({ current: 0, total: files.length })
+
+    // Initialize file statuses as pending
+    const initialStatuses: FileProcessingStatus[] = files.map(file => ({
+      file,
+      status: 'pending' as FileStatus
+    }))
+    setFileStatuses(initialStatuses)
 
     try {
       // Get current user's tenant_id
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Not authenticated')
-      
+
       const { data: profile } = await supabase
         .from('profiles')
         .select('tenant_id')
         .eq('id', user.id)
         .single()
-      
+
       if (!profile) throw new Error('Profile not found')
 
       // Get schema name if selected
@@ -106,10 +122,16 @@ export default function Dashboard() {
       // Process all files in parallel for faster results
       const uploadPromises = files.map(async (file, index) => {
         console.log(`Starting upload for file ${index + 1}/${files.length}:`, file.name)
+
+        // Update status to processing
+        setFileStatuses(prev => prev.map(fs =>
+          fs.file.name === file.name ? { ...fs, status: 'processing' as FileStatus } : fs
+        ))
+
         try {
           const data = await uploadDocument(file, selectedSchemaId || undefined)
           console.log(`Successfully processed ${file.name}:`, data)
-          
+
           // Save metadata to database
           const { data: savedResult } = await supabase.from('extraction_results').insert({
             tenant_id: profile.tenant_id,
@@ -121,7 +143,7 @@ export default function Dashboard() {
             workflow: data.operational_metadata?.workflow || null,
             status: 'completed'
           }).select().single()
-          
+
           // Store full results in localStorage with the result ID
           if (savedResult) {
             const storageKey = `extraction_result_${savedResult.id}`
@@ -135,11 +157,17 @@ export default function Dashboard() {
           } else {
             console.error('No savedResult returned from database insert')
           }
-          
+
+          // Update status to completed
+          setFileStatuses(prev => prev.map(fs =>
+            fs.file.name === file.name ? { ...fs, status: 'completed' as FileStatus } : fs
+          ))
+          setProcessingProgress(prev => ({ ...prev, current: prev.current + 1 }))
+
           return { file: file.name, success: true, data, resultId: savedResult?.id }
         } catch (err: any) {
           console.error(`Error processing ${file.name}:`, err)
-          
+
           // Save error metadata to database
           await supabase.from('extraction_results').insert({
             tenant_id: profile.tenant_id,
@@ -150,7 +178,13 @@ export default function Dashboard() {
             status: 'failed',
             error_message: err.message
           })
-          
+
+          // Update status to error
+          setFileStatuses(prev => prev.map(fs =>
+            fs.file.name === file.name ? { ...fs, status: 'error' as FileStatus, error: err.message } : fs
+          ))
+          setProcessingProgress(prev => ({ ...prev, current: prev.current + 1 }))
+
           return { file: file.name, success: false, error: err.message || 'Processing failed' }
         }
       })
@@ -186,6 +220,7 @@ export default function Dashboard() {
     setSelectedSchemaId('')
     setProcessingProgress({ current: 0, total: 0 })
     setErrorMsg(null)
+    setFileStatuses([])
   }
 
   const openCreateModal = () => {
@@ -414,6 +449,96 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* Batch Processing Progress Indicator */}
+      {status === 'processing' && fileStatuses.length > 0 && (
+        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+          <div className="p-6 border-b border-gray-100 bg-gradient-to-r from-green-50 to-emerald-50">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Loader2 className="h-6 w-6 text-green-600 animate-spin" />
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Processing Files</h3>
+                  <p className="text-sm text-gray-600">
+                    {processingProgress.current} of {processingProgress.total} completed
+                  </p>
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-2xl font-bold text-gray-900">
+                  {Math.round((processingProgress.current / processingProgress.total) * 100)}%
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 bg-gray-200 rounded-full h-2.5 overflow-hidden">
+              <div
+                className="bg-gradient-to-r from-green-500 to-emerald-500 h-2.5 rounded-full transition-all duration-500"
+                style={{ width: `${(processingProgress.current / processingProgress.total) * 100}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="p-6 space-y-3 max-h-96 overflow-y-auto">
+            {fileStatuses.map((fileStatus, index) => {
+              const StatusIcon = fileStatus.status === 'completed'
+                ? CheckCircle2
+                : fileStatus.status === 'error'
+                ? XCircle
+                : fileStatus.status === 'processing'
+                ? Loader2
+                : Clock
+
+              const statusColor = fileStatus.status === 'completed'
+                ? 'text-green-600 bg-green-50'
+                : fileStatus.status === 'error'
+                ? 'text-red-600 bg-red-50'
+                : fileStatus.status === 'processing'
+                ? 'text-blue-600 bg-blue-50'
+                : 'text-gray-400 bg-gray-50'
+
+              const statusText = fileStatus.status === 'completed'
+                ? 'Completed'
+                : fileStatus.status === 'error'
+                ? 'Failed'
+                : fileStatus.status === 'processing'
+                ? 'Processing...'
+                : 'Pending'
+
+              return (
+                <div
+                  key={index}
+                  className={`flex items-center justify-between p-4 rounded-lg border transition-all ${
+                    fileStatus.status === 'error'
+                      ? 'border-red-200 bg-red-50/50'
+                      : 'border-gray-200 bg-gray-50'
+                  }`}
+                >
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <div className={`p-2 rounded-lg ${statusColor}`}>
+                      <StatusIcon className={`h-5 w-5 ${fileStatus.status === 'processing' ? 'animate-spin' : ''}`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-gray-900 text-sm truncate">
+                        {fileStatus.file.name}
+                      </p>
+                      {fileStatus.error && (
+                        <p className="text-xs text-red-600 mt-1 truncate">
+                          {fileStatus.error}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="ml-3">
+                    <span className={`text-xs font-medium px-3 py-1 rounded-full ${statusColor}`}>
+                      {statusText}
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Error Message */}
       {errorMsg && status === 'idle' && (
