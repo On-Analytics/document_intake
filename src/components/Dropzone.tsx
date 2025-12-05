@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { UploadCloud, FileText, X, CheckCircle, Image, FileImage } from 'lucide-react'
+import { UploadCloud, FileText, X, CheckCircle, FileImage } from 'lucide-react'
 
 interface DropzoneProps {
   onFilesSelect: (files: File[]) => void
@@ -115,7 +115,7 @@ export default function Dropzone({ onFilesSelect, selectedFiles }: DropzoneProps
       onDragOver={handleDrag}
       onDrop={handleDrop}
       className={`
-        relative flex flex-col items-center justify-center w-full min-h-[320px]
+        relative flex flex-col items-center justify-center w-full min-h-[240px]
         rounded-2xl border-3 border-dashed transition-all duration-300 cursor-pointer overflow-hidden
         ${isDragging
           ? 'border-green-500 bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 scale-[1.01] shadow-2xl'
@@ -131,46 +131,29 @@ export default function Dropzone({ onFilesSelect, selectedFiles }: DropzoneProps
         accept=".pdf,.png,.jpg,.jpeg"
       />
 
-      <div className="flex flex-col items-center text-center p-8 pointer-events-none relative z-0">
-        <div className={`relative mb-6 transition-all duration-300 ${isDragging ? 'scale-110' : 'scale-100'}`}>
+      <div className="flex flex-col items-center text-center p-6 pointer-events-none relative z-0">
+        <div className={`relative mb-4 transition-all duration-300 ${isDragging ? 'scale-110' : 'scale-100'}`}>
           <div className={`absolute inset-0 rounded-full blur-xl transition-all ${isDragging ? 'bg-green-400/50 scale-150' : 'bg-blue-300/30'}`}></div>
-          <div className={`relative p-6 rounded-3xl transition-all ${isDragging ? 'bg-gradient-to-br from-green-400 to-emerald-500 shadow-xl' : 'bg-gradient-to-br from-blue-400 to-blue-600 shadow-lg'}`}>
-            <UploadCloud className={`h-16 w-16 text-white transition-transform ${isDragging ? 'animate-bounce' : ''}`} />
+          <div className={`relative p-4 rounded-3xl transition-all ${isDragging ? 'bg-gradient-to-br from-green-400 to-emerald-500 shadow-xl' : 'bg-gradient-to-br from-blue-400 to-blue-600 shadow-lg'}`}>
+            <UploadCloud className={`h-12 w-12 text-white transition-transform ${isDragging ? 'animate-bounce' : ''}`} />
           </div>
         </div>
 
-        <p className="text-2xl font-bold text-gray-900 mb-2">
+        <p className="text-xl font-bold text-gray-900 mb-1">
           {isDragging ? 'Drop your files here!' : 'Drag & Drop Files'}
         </p>
-        <p className="text-base text-gray-600 mb-1">
+        <p className="text-sm text-gray-600 mb-3">
           or click to browse
         </p>
-        <p className="text-sm text-gray-500 mt-3 mb-6">
+        <p className="text-xs text-gray-500 mb-4">
           PDF, PNG, JPG, JPEG • Max 10MB per file • Multiple files supported
         </p>
 
-        <div className="flex items-center gap-6 mt-2">
-          <div className="flex flex-col items-center gap-2">
-            <div className="p-3 bg-blue-100 rounded-xl">
-              <FileText className="h-6 w-6 text-blue-600" />
-            </div>
-            <span className="text-xs font-medium text-gray-600">Documents</span>
-          </div>
-          <div className="flex flex-col items-center gap-2">
-            <div className="p-3 bg-green-100 rounded-xl">
-              <Image className="h-6 w-6 text-green-600" />
-            </div>
-            <span className="text-xs font-medium text-gray-600">Images</span>
-          </div>
-        </div>
-
-        <div className="mt-8 flex items-center gap-3 text-xs text-gray-500 bg-white/50 px-4 py-2 rounded-full">
+        <div className="flex items-center gap-3 text-xs text-gray-500 bg-white/50 px-4 py-2 rounded-full">
           <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse"></div>
           <span>Secure & Encrypted</span>
           <div className="h-1 w-1 rounded-full bg-gray-400"></div>
           <span>AI-Powered</span>
-          <div className="h-1 w-1 rounded-full bg-gray-400"></div>
-          <span>Lightning Fast</span>
         </div>
       </div>
     </div>
