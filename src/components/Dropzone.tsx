@@ -112,7 +112,7 @@ export default function Dropzone({ onFilesSelect, selectedFiles }: DropzoneProps
             multiple
             className="hidden"
             onChange={handleFileInput}
-            accept=".pdf,.png,.jpg,.jpeg,.docx"
+            accept=".pdf,.png,.jpg,.jpeg,.docx,.txt"
           />
           <div className="text-center py-4 border-2 border-dashed border-gray-300 rounded-xl bg-gray-50 hover:bg-white hover:border-green-400 transition-all">
             <p className="text-sm font-medium text-gray-700">
@@ -144,7 +144,7 @@ export default function Dropzone({ onFilesSelect, selectedFiles }: DropzoneProps
         multiple
         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
         onChange={handleFileInput}
-        accept=".pdf,.png,.jpg,.jpeg,.docx"
+        accept=".pdf,.png,.jpg,.jpeg,.docx,.txt"
       />
 
       <div className="flex flex-col items-center text-center p-6 pointer-events-none relative z-0">
@@ -162,7 +162,7 @@ export default function Dropzone({ onFilesSelect, selectedFiles }: DropzoneProps
           or click to browse
         </p>
         <p className="text-xs text-gray-500 mb-4">
-          PDF, PNG, JPG, JPEG, DOCX • Max 10MB per file • Multiple files supported
+          PDF, PNG, JPG, JPEG, DOCX, TXT • Max 10MB per file • Multiple files supported
         </p>
 
         <div className="flex items-center gap-3 text-xs text-gray-500 bg-white/50 px-4 py-2 rounded-full">

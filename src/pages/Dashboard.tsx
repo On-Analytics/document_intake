@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { uploadDocument } from '../lib/api'
 import Dropzone from '../components/Dropzone'
 import CreateSchemaModal, { SchemaData } from '../components/CreateSchemaModal'
 import SuccessModal from '../components/SuccessModal'
-import { Loader2, Plus, ChevronRight, Sparkles, FileText, AlertCircle, Copy, Clock, XCircle, Type, Hash, Calendar, ToggleLeft, List, Box, Check, CheckCircle2 } from 'lucide-react'
+import { Loader2, Plus, Sparkles, FileText, AlertCircle, Copy, XCircle, Check, CheckCircle2, ChevronLeft, ChevronRight, Eye } from 'lucide-react'
 
 type FileStatus = 'pending' | 'processing' | 'completed' | 'error'
 
@@ -15,48 +15,6 @@ interface FileProcessingStatus {
   error?: string
 }
 
-const getFieldTypeIcon = (type: string) => {
-  switch (type) {
-    case 'string':
-      return <Type className="h-3.5 w-3.5" />
-    case 'number':
-      return <Hash className="h-3.5 w-3.5" />
-    case 'date':
-      return <Calendar className="h-3.5 w-3.5" />
-    case 'boolean':
-      return <ToggleLeft className="h-3.5 w-3.5" />
-    case 'list[string]':
-      return <List className="h-3.5 w-3.5" />
-    case 'object':
-      return <Box className="h-3.5 w-3.5" />
-    case 'list[object]':
-      return <List className="h-3.5 w-3.5" />
-    default:
-      return <Type className="h-3.5 w-3.5" />
-  }
-}
-
-const getFieldTypeLabel = (type: string) => {
-  switch (type) {
-    case 'string':
-      return 'Text'
-    case 'number':
-      return 'Number'
-    case 'date':
-      return 'Date'
-    case 'boolean':
-      return 'Yes/No'
-    case 'list[string]':
-      return 'List'
-    case 'object':
-      return 'Object'
-    case 'list[object]':
-      return 'List (Objects)'
-    default:
-      return type
-  }
-}
-
 export default function Dashboard() {
   const [files, setFiles] = useState<File[]>([])
   const [selectedSchemaId, setSelectedSchemaId] = useState<string>('')
@@ -64,6 +22,10 @@ export default function Dashboard() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [processingProgress, setProcessingProgress] = useState({ current: 0, total: 0 })
   const [fileStatuses, setFileStatuses] = useState<FileProcessingStatus[]>([])
+
+  // Document Preview State
+  const [previewIndex, setPreviewIndex] = useState(0)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
 
   // New Template Modal State
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -77,6 +39,29 @@ export default function Dashboard() {
     fieldCount: number
     status: 'completed' | 'failed'
   }>>([])
+
+  // Generate preview URL when files change
+  const currentFile = files[previewIndex]
+  const isPreviewable = useMemo(() => {
+    if (!currentFile) return false
+    const type = currentFile.type
+    return type === 'application/pdf' || type.startsWith('image/')
+  }, [currentFile])
+
+  useEffect(() => {
+    if (currentFile && isPreviewable) {
+      const url = URL.createObjectURL(currentFile)
+      setPreviewUrl(url)
+      return () => URL.revokeObjectURL(url)
+    } else {
+      setPreviewUrl(null)
+    }
+  }, [currentFile, isPreviewable])
+
+  // Reset preview index when files change
+  useEffect(() => {
+    setPreviewIndex(0)
+  }, [files.length])
 
   // Fetch Schemas
   const { data: schemas, refetch: refetchSchemas } = useQuery({
@@ -209,7 +194,7 @@ export default function Dashboard() {
       console.log('Waiting for all uploads to complete...')
       const processedResults = await Promise.all(uploadPromises)
       console.log('All uploads completed:', processedResults)
-      
+
       const hasError = processedResults.some(r => !r.success)
 
       if (hasError) {
@@ -265,7 +250,7 @@ export default function Dashboard() {
         description: f.description || ''
       })) || []
     }
-    
+
     setModalInitialData(initialData)
     setIsModalOpen(true)
   }
@@ -273,365 +258,269 @@ export default function Dashboard() {
   return (
     <div className="flex flex-col min-h-screen">
       {/* Page Header */}
-      <div className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-10">
-        <div className="px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-gradient-to-br from-green-500 to-emerald-500 rounded-2xl shadow-lg">
-              <Sparkles className="h-7 w-7 text-white" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">Extract Data</h1>
-              <p className="text-gray-600 mt-1">Upload documents and let AI extract structured data automatically</p>
-            </div>
-          </div>
-        </div>
+      <div className="px-6 lg:px-8 pt-6 pb-4">
+        <h1 className="text-2xl font-bold text-dark">Extract Data</h1>
+        <p className="text-sm text-gray-600 mt-1">Upload documents and let AI extract structured data automatically</p>
       </div>
 
       {/* Page Content */}
-      <div className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
-        <div className="max-w-7xl mx-auto space-y-6">
-
-      {/* Two Column Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-        {/* Left Column: File Upload */}
-        <div className="lg:col-span-2">
-          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden h-full">
-            <div className="p-6">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-dark shadow-sm">
+      <div className="flex-1 px-6 lg:px-8 pb-8">
+        <div className="flex gap-6">
+          {/* Left Column: Steps */}
+          <div className="flex-1 max-w-2xl">
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            
+            {/* Step 1: Upload Documents */}
+            <div className="p-5 border-b border-gray-100">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex items-center justify-center h-7 w-7 rounded-full bg-primary text-dark text-sm font-bold">
                   1
                 </div>
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-900">Upload Documents</h2>
-                  <p className="text-sm text-gray-500">PDF or image files</p>
-                </div>
+                <h2 className="text-base font-semibold text-dark">Upload Documents</h2>
               </div>
               <Dropzone selectedFiles={files} onFilesSelect={setFiles} />
             </div>
-          </div>
-        </div>
 
-        {/* Right Column: Template Selection */}
-        <div className="lg:col-span-3">
-          <div className={`bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden h-full transition-all ${
-            files.length === 0 ? 'opacity-40' : 'opacity-100'
-          }`}>
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-6">
+            {/* Step 2: Choose Template */}
+            <div className={`p-5 border-b border-gray-100 transition-opacity ${files.length === 0 ? 'opacity-50' : 'opacity-100'}`}>
+              <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-dark shadow-sm">
+                  <div className={`flex items-center justify-center h-7 w-7 rounded-full text-sm font-bold ${files.length > 0 ? 'bg-primary text-dark' : 'bg-gray-200 text-gray-500'}`}>
                     2
                   </div>
                   <div>
-                    <h2 className="text-lg font-semibold text-gray-900">Choose Template</h2>
-                    <p className="text-sm text-gray-500">Select extraction schema</p>
+                    <h2 className="text-base font-semibold text-dark">Choose Template</h2>
+                    <p className="text-xs text-gray-500">Optional - defaults to auto-detect</p>
                   </div>
                 </div>
-
-                <div className="flex gap-2">
-                  {selectedSchemaId && (
-                    <button
-                      onClick={openCloneModal}
-                      disabled={files.length === 0}
-                      title="Clone & Edit Template"
-                      className="flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm border border-gray-300 hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <Copy className="h-4 w-4" />
-                      Clone
-                    </button>
-                  )}
-
-                  <button
-                    onClick={openCreateModal}
-                    disabled={files.length === 0}
-                    className="flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-dark shadow-sm hover:bg-primary-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Plus className="h-4 w-4" />
-                    New
-                  </button>
-                </div>
+                <button
+                  onClick={openCreateModal}
+                  disabled={files.length === 0}
+                  className="flex items-center gap-1.5 text-xs font-medium text-primary hover:bg-primary/5 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  New Template
+                </button>
               </div>
-
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 max-h-[600px] overflow-y-auto pr-2">
-                {/* Auto-detect Card */}
+              
+              <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => setSelectedSchemaId('')}
                   disabled={files.length === 0}
-                  className={`relative text-left p-4 rounded-xl border-2 transition-all group hover:shadow-md disabled:cursor-not-allowed ${
-                    selectedSchemaId === ''
-                      ? 'border-green-500 bg-gradient-to-br from-green-50 to-emerald-50 shadow-md'
-                      : 'border-gray-200 bg-white hover:border-green-300'
-                  }`}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-all disabled:cursor-not-allowed ${selectedSchemaId === ''
+                    ? 'border-primary bg-primary/10 text-dark'
+                    : 'border-gray-200 bg-white hover:border-primary/30 text-gray-700'
+                    }`}
                 >
-                {selectedSchemaId === '' && (
-                  <div className="absolute top-3 right-3">
-                    <div className="bg-green-500 rounded-full p-1">
-                      <Check className="h-3 w-3 text-white" />
-                    </div>
-                  </div>
+                  <Sparkles className={`h-4 w-4 ${selectedSchemaId === '' ? 'text-primary' : 'text-gray-400'}`} />
+                  <span className="font-medium text-sm">Auto-detect</span>
+                  {selectedSchemaId === '' && <Check className="h-3.5 w-3.5 text-primary" />}
+                </button>
+
+                {schemas?.map(schema => (
+                  <button
+                    key={schema.id}
+                    onClick={() => setSelectedSchemaId(schema.id)}
+                    disabled={files.length === 0}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-all disabled:cursor-not-allowed ${selectedSchemaId === schema.id
+                      ? 'border-primary bg-primary/10 text-dark'
+                      : 'border-gray-200 bg-white hover:border-primary/30 text-gray-700'
+                      }`}
+                  >
+                    <FileText className={`h-4 w-4 ${selectedSchemaId === schema.id ? 'text-primary' : 'text-gray-400'}`} />
+                    <span className="font-medium text-sm">{schema.name}</span>
+                    {selectedSchemaId === schema.id && <Check className="h-3.5 w-3.5 text-primary" />}
+                  </button>
+                ))}
+
+                {selectedSchemaId && (
+                  <button
+                    onClick={openCloneModal}
+                    disabled={files.length === 0}
+                    className="flex items-center gap-1.5 px-3 py-2 text-xs text-gray-500 hover:text-primary hover:bg-primary/5 rounded-lg transition-colors"
+                    title="Clone selected template"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    Clone
+                  </button>
                 )}
-                <div className="flex items-start gap-3 mb-3">
-                  <div className={`p-2.5 rounded-lg transition-all ${
-                    selectedSchemaId === ''
-                      ? 'bg-green-500 text-white'
-                      : 'bg-gradient-to-br from-green-100 to-emerald-100 text-green-600 group-hover:from-green-200 group-hover:to-emerald-200'
-                  }`}>
-                    <Sparkles className="h-5 w-5" />
+              </div>
+            </div>
+
+            {/* Step 3: Extract */}
+            <div className={`p-5 bg-gray-50 transition-opacity ${files.length === 0 ? 'opacity-50' : 'opacity-100'}`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`flex items-center justify-center h-7 w-7 rounded-full text-sm font-bold ${files.length > 0 ? 'bg-primary text-dark' : 'bg-gray-200 text-gray-500'}`}>
+                    3
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-gray-900 text-sm mb-1">Auto-detect</h3>
-                    <p className="text-xs text-gray-600 leading-relaxed">
-                      AI automatically detects and extracts all key information
+                  <div>
+                    <h2 className="text-base font-semibold text-dark">Extract Data</h2>
+                    <p className="text-xs text-gray-500">
+                      {files.length === 0 
+                        ? 'Upload files to continue' 
+                        : `${files.length} file${files.length > 1 ? 's' : ''} ready • ${selectedSchemaId ? schemas?.find(s => s.id === selectedSchemaId)?.name : 'Auto-detect'}`
+                      }
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5 text-xs font-medium text-green-600">
-                  <Sparkles className="h-3 w-3" />
-                  Generic extraction
-                </div>
-              </button>
-
-                {/* Template Cards */}
-                {schemas?.map(schema => {
-                  const fields = schema.content?.fields || []
-                  const fieldCount = fields.length
-                  const maxPreviewFields = 3
-
-                  return (
+                <div className="flex items-center gap-2">
+                  {files.length > 0 && (
                     <button
-                      key={schema.id}
-                      onClick={() => setSelectedSchemaId(schema.id)}
-                      disabled={files.length === 0}
-                      className={`relative text-left p-4 rounded-xl border-2 transition-all group hover:shadow-md disabled:cursor-not-allowed ${
-                        selectedSchemaId === schema.id
-                          ? 'border-blue-500 bg-gradient-to-br from-blue-50 to-cyan-50 shadow-md'
-                          : 'border-gray-200 bg-white hover:border-blue-300'
-                      }`}
+                      onClick={handleReset}
+                      className="px-3 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-all"
                     >
-                    {selectedSchemaId === schema.id && (
-                      <div className="absolute top-3 right-3">
-                        <div className="bg-blue-500 rounded-full p-1">
-                          <Check className="h-3 w-3 text-white" />
-                        </div>
-                      </div>
+                      Clear
+                    </button>
+                  )}
+                  <button
+                    onClick={handleExtract}
+                    disabled={files.length === 0 || status === 'processing'}
+                    className="flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-dark hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  >
+                    {status === 'processing' ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Processing...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-4 w-4" />
+                        Extract Data
+                      </>
                     )}
-
-                    <div className="flex items-start gap-3 mb-3">
-                      <div className={`p-2.5 rounded-lg transition-all ${
-                        selectedSchemaId === schema.id
-                          ? 'bg-blue-500 text-white'
-                          : 'bg-gradient-to-br from-blue-100 to-cyan-100 text-blue-600 group-hover:from-blue-200 group-hover:to-cyan-200'
-                      }`}>
-                        <FileText className="h-5 w-5" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-gray-900 text-sm mb-1 truncate pr-6">
-                          {schema.name}
-                        </h3>
-                        {schema.description && (
-                          <p className="text-xs text-gray-600 line-clamp-2 leading-relaxed">
-                            {schema.description}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Field Preview */}
-                    {fieldCount > 0 && (
-                      <div className="space-y-1.5 mb-3">
-                        {fields.slice(0, maxPreviewFields).map((field: any, idx: number) => (
-                          <div
-                            key={idx}
-                            className="flex items-center gap-2 text-xs bg-gray-50 rounded-md px-2 py-1.5 border border-gray-100"
-                          >
-                            <div className="text-gray-500">
-                              {getFieldTypeIcon(field.type)}
-                            </div>
-                            <span className="font-medium text-gray-700 truncate flex-1">
-                              {field.name}
-                            </span>
-                            <span className="text-gray-500 text-[10px] uppercase tracking-wide">
-                              {getFieldTypeLabel(field.type)}
-                            </span>
-                          </div>
-                        ))}
-                        {fieldCount > maxPreviewFields && (
-                          <div className="text-xs text-gray-500 italic px-2">
-                            +{fieldCount - maxPreviewFields} more field{fieldCount - maxPreviewFields > 1 ? 's' : ''}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Footer */}
-                    <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-                      <span className="text-xs font-medium text-gray-600">
-                        {fieldCount} field{fieldCount !== 1 ? 's' : ''}
-                      </span>
-                      {schema.is_public && (
-                        <span className="text-[10px] font-medium bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full uppercase tracking-wide">
-                          System
-                        </span>
-                      )}
-                    </div>
                   </button>
-                  )
-                })}
+                </div>
               </div>
+            </div>
+          </div>
+
+          {/* Progress Indicator */}
+          {status === 'processing' && fileStatuses.length > 0 && (
+            <div className="mt-4 bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="p-4 border-b border-gray-100">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-semibold text-dark">Processing files...</span>
+                  <span className="text-sm font-bold text-primary">
+                    {Math.round((processingProgress.current / processingProgress.total) * 100)}%
+                  </span>
+                </div>
+                <div className="bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className="bg-primary h-1.5 rounded-full transition-all duration-500"
+                    style={{ width: `${(processingProgress.current / processingProgress.total) * 100}%` }}
+                  />
+                </div>
+              </div>
+              <div className="max-h-48 overflow-y-auto">
+                {fileStatuses.map((fileStatus, index) => (
+                  <div key={index} className="flex items-center justify-between px-4 py-2.5 border-b border-gray-50 last:border-0">
+                    <span className="truncate text-sm text-gray-700">{fileStatus.file.name}</span>
+                    {fileStatus.status === 'completed' ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+                    ) : fileStatus.status === 'error' ? (
+                      <XCircle className="h-4 w-4 text-red-500 shrink-0" />
+                    ) : (
+                      <Loader2 className="h-4 w-4 text-primary animate-spin shrink-0" />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          </div>
+
+          {/* Right Column: Document Preview */}
+          <div className="hidden lg:block flex-1 min-w-[500px]">
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden sticky top-6">
+              <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Eye className="h-4 w-4 text-gray-400" />
+                  <span className="text-sm font-medium text-dark">Document Preview</span>
+                </div>
+                {files.length > 1 && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setPreviewIndex(Math.max(0, previewIndex - 1))}
+                      disabled={previewIndex === 0}
+                      className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <span className="text-xs text-gray-500 min-w-[3rem] text-center">
+                      {previewIndex + 1} / {files.length}
+                    </span>
+                    <button
+                      onClick={() => setPreviewIndex(Math.min(files.length - 1, previewIndex + 1))}
+                      disabled={previewIndex === files.length - 1}
+                      className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                )}
+              </div>
+              
+              <div className="h-[700px] bg-gray-50 flex items-center justify-center">
+                {files.length === 0 ? (
+                  <div className="text-center p-6">
+                    <FileText className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+                    <p className="text-sm text-gray-500">Upload a document to preview</p>
+                  </div>
+                ) : previewUrl ? (
+                  currentFile?.type === 'application/pdf' ? (
+                    <iframe
+                      src={previewUrl}
+                      className="w-full h-full"
+                      title="PDF Preview"
+                    />
+                  ) : (
+                    <img
+                      src={previewUrl}
+                      alt={currentFile?.name}
+                      className="max-w-full max-h-full object-contain"
+                    />
+                  )
+                ) : (
+                  <div className="text-center p-6">
+                    <FileText className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+                    <p className="text-sm font-medium text-gray-700 mb-1">{currentFile?.name}</p>
+                    <p className="text-xs text-gray-500">Preview not available for this file type</p>
+                  </div>
+                )}
+              </div>
+              
+              {currentFile && (
+                <div className="px-4 py-3 border-t border-gray-100 bg-gray-50">
+                  <p className="text-xs text-gray-600 truncate" title={currentFile.name}>
+                    {currentFile.name}
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    {(currentFile.size / 1024).toFixed(1)} KB
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Action Bar */}
-      {files.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg">
-                <FileText className="h-5 w-5 text-green-600" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-900">
-                  {files.length} file{files.length > 1 ? 's' : ''} ready to process
-                </p>
-                <p className="text-xs text-gray-500">
-                  {selectedSchemaId ? 'Using selected template' : 'Using auto-detect mode'}
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={handleReset}
-                className="rounded-lg bg-white px-4 py-2.5 text-sm font-medium text-gray-700 shadow-sm border border-gray-300 hover:bg-gray-50 hover:border-gray-400 transition-all"
-              >
-                Clear All
-              </button>
-              <button
-                onClick={handleExtract}
-                disabled={status === 'processing'}
-                className="flex items-center gap-2 rounded-lg bg-primary px-6 py-2.5 text-sm font-semibold text-dark shadow-md hover:shadow-lg hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-              >
-                {status === 'processing' ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Processing {processingProgress.current}/{processingProgress.total}...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-4 w-4" />
-                    Extract Data
-                    <ChevronRight className="h-4 w-4" />
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Batch Processing Progress Indicator */}
-      {status === 'processing' && fileStatuses.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
-          <div className="p-6 border-b border-gray-100 bg-gradient-to-r from-green-50 to-emerald-50">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Loader2 className="h-6 w-6 text-green-600 animate-spin" />
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900">Processing Files</h3>
-                  <p className="text-sm text-gray-600">
-                    {processingProgress.current} of {processingProgress.total} completed
-                  </p>
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="text-2xl font-bold text-gray-900">
-                  {Math.round((processingProgress.current / processingProgress.total) * 100)}%
-                </div>
-              </div>
-            </div>
-            <div className="mt-4 bg-gray-200 rounded-full h-2.5 overflow-hidden">
-              <div
-                className="bg-gradient-to-r from-green-500 to-emerald-500 h-2.5 rounded-full transition-all duration-500"
-                style={{ width: `${(processingProgress.current / processingProgress.total) * 100}%` }}
-              />
-            </div>
-          </div>
-
-          <div className="p-6 space-y-3 max-h-96 overflow-y-auto">
-            {fileStatuses.map((fileStatus, index) => {
-              const StatusIcon = fileStatus.status === 'completed'
-                ? CheckCircle2
-                : fileStatus.status === 'error'
-                ? XCircle
-                : fileStatus.status === 'processing'
-                ? Loader2
-                : Clock
-
-              const statusColor = fileStatus.status === 'completed'
-                ? 'text-green-600 bg-green-50'
-                : fileStatus.status === 'error'
-                ? 'text-red-600 bg-red-50'
-                : fileStatus.status === 'processing'
-                ? 'text-blue-600 bg-blue-50'
-                : 'text-gray-400 bg-gray-50'
-
-              const statusText = fileStatus.status === 'completed'
-                ? 'Completed'
-                : fileStatus.status === 'error'
-                ? 'Failed'
-                : fileStatus.status === 'processing'
-                ? 'Processing...'
-                : 'Pending'
-
-              return (
-                <div
-                  key={index}
-                  className={`flex items-center justify-between p-4 rounded-lg border transition-all ${
-                    fileStatus.status === 'error'
-                      ? 'border-red-200 bg-red-50/50'
-                      : 'border-gray-200 bg-gray-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className={`p-2 rounded-lg ${statusColor}`}>
-                      <StatusIcon className={`h-5 w-5 ${fileStatus.status === 'processing' ? 'animate-spin' : ''}`} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-gray-900 text-sm truncate">
-                        {fileStatus.file.name}
-                      </p>
-                      {fileStatus.error && (
-                        <p className="text-xs text-red-600 mt-1 truncate">
-                          {fileStatus.error}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="ml-3">
-                    <span className={`text-xs font-medium px-3 py-1 rounded-full ${statusColor}`}>
-                      {statusText}
-                    </span>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
       {/* Error Message */}
-      {errorMsg && status === 'idle' && (
-        <div className="rounded-xl bg-red-50 p-6 flex items-start gap-4 text-red-800 border border-red-200 shadow-sm animate-in fade-in">
-          <div className="p-2 bg-red-100 rounded-lg">
-            <AlertCircle className="h-6 w-6 shrink-0" />
+      {
+        errorMsg && status === 'idle' && (
+          <div className="px-8 lg:px-12">
+            <div className="max-w-7xl mx-auto rounded-2xl bg-red-50 p-8 flex items-start gap-4 text-red-800 border border-red-200 animate-in fade-in">
+              <div className="h-12 w-12 bg-red-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                <AlertCircle className="h-6 w-6" />
+              </div>
+              <div className="flex-1">
+                <h3 className="font-semibold text-lg">Extraction Failed</h3>
+                <p className="text-sm mt-2 text-red-700">{errorMsg}</p>
+              </div>
+            </div>
           </div>
-          <div className="flex-1">
-            <h3 className="font-semibold text-lg">Extraction Failed</h3>
-            <p className="text-sm mt-1 text-red-700">{errorMsg}</p>
-          </div>
-        </div>
-      )}
+        )
+      }
 
       {/* Create Template Modal */}
       <CreateSchemaModal
@@ -651,8 +540,6 @@ export default function Dashboard() {
         filesCount={processedFilesCount}
         processedFiles={processedFilesSummary}
       />
-        </div>
-      </div>
     </div>
   )
 }
