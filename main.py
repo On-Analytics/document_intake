@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any
 import json
 
 from router import route_document
-from langchain_community.document_loaders import PDFPlumberLoader
+from langchain_community.document_loaders import PDFPlumberLoader, TextLoader, Docx2txtLoader
 from langchain_core.documents import Document
 
 # Initialize FastAPI app
@@ -60,12 +60,21 @@ async def process_document(
     try:
         # 2. Load Document for Router
         # Check file extension
-        is_pdf = suffix.lower() == ".pdf"
-        is_image = suffix.lower() in [".png", ".jpg", ".jpeg"]
+        suffix_lower = suffix.lower()
+        is_pdf = suffix_lower == ".pdf"
+        is_txt = suffix_lower == ".txt"
+        is_docx = suffix_lower == ".docx"
+        is_image = suffix_lower in [".png", ".jpg", ".jpeg"]
 
-        if is_pdf:
-            # Simplified loading logic for now
-            loader = PDFPlumberLoader(tmp_path)
+        if is_pdf or is_txt or is_docx:
+            # Use appropriate loader based on file type
+            if is_pdf:
+                loader = PDFPlumberLoader(tmp_path)
+            elif is_txt:
+                loader = TextLoader(tmp_path, encoding="utf-8")
+            else:  # .docx
+                loader = Docx2txtLoader(tmp_path)
+
             docs = loader.load()
 
             if not docs:
@@ -200,6 +209,7 @@ async def process_document(
             )
 
         # 6. Build Response
+        # For non-PDF types, we treat the document as a single logical page for now.
         op_metadata = {
             "page_count": len(docs) if is_pdf else 1,
             "doc_type": doc_type,
