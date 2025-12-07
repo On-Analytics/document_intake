@@ -12,16 +12,17 @@ interface SuccessModalProps {
   onClose: () => void
   filesCount: number
   processedFiles?: ProcessedFile[]
+  batchId?: string | null
 }
 
-export default function SuccessModal({ isOpen, onClose, filesCount, processedFiles = [] }: SuccessModalProps) {
+export default function SuccessModal({ isOpen, onClose, filesCount, processedFiles = [], batchId }: SuccessModalProps) {
   const navigate = useNavigate()
 
   if (!isOpen) return null
 
   const handleViewResults = () => {
     onClose()
-    navigate('/history')
+    navigate('/history', { state: { batchId } })
   }
 
   const showFileList = processedFiles.length > 0 && processedFiles.length <= 5

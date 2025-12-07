@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { FileText, Calendar, Clock, CheckCircle, AlertCircle, Code, ChevronDown, ChevronRight, FileJson, FileSpreadsheet } from 'lucide-react'
 import '../utils/debugStorage'
@@ -26,26 +27,31 @@ interface StoredResult {
 export default function History() {
   const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set())
   const [loadedResults, setLoadedResults] = useState<Map<string, StoredResult>>(new Map())
+  const location = useLocation()
+  const navBatchId = location.state?.batchId as string | undefined
 
   // Fetch extraction results
   const { data: results, isLoading } = useQuery({
-    queryKey: ['extraction-results'],
+    queryKey: ['extraction-results', navBatchId], // Add navBatchId to key to re-fetch on change
     queryFn: async () => {
-      // 1. Get the latest batch_id
-      const { data: latest } = await supabase
-        .from('extraction_results')
-        .select('batch_id')
-        .not('batch_id', 'is', null) // Filter out legacy records without batch_id
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single()
+      let targetBatchId = navBatchId
 
-      if (!latest?.batch_id) {
-        // Fallback: If no batched results exist, return empty or handle legacy
-        // For now, let's return [] to strictly follow "only need to see the ones recently processed"
-        // OR we can return the last 10 records as a fallback?
-        // User request: "only need to see the ones recently processed in the current extraction"
-        // If there is no current extraction (with batch_id), showing nothing is technically correct.
+      // If no ID passed from navigation, find the latest one
+      if (!targetBatchId) {
+        // 1. Get the latest batch_id
+        const { data: latest } = await supabase
+          .from('extraction_results')
+          .select('batch_id')
+          .not('batch_id', 'is', null) // Filter out legacy records without batch_id
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single()
+
+        targetBatchId = latest?.batch_id
+      }
+
+      if (!targetBatchId) {
+        // Fallback: If no batched results exist, return empty
         return []
       }
 
@@ -53,7 +59,7 @@ export default function History() {
       const { data, error } = await supabase
         .from('extraction_results')
         .select('*')
-        .eq('batch_id', latest.batch_id)
+        .eq('batch_id', targetBatchId)
         .order('created_at', { ascending: false })
 
       if (error) throw error

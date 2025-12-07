@@ -6,6 +6,7 @@ import Dropzone from '../components/Dropzone'
 import CreateSchemaModal, { SchemaData } from '../components/CreateSchemaModal'
 import SuccessModal from '../components/SuccessModal'
 import { Loader2, Plus, Sparkles, FileText, AlertCircle, Copy, XCircle, Check, CheckCircle2, ChevronLeft, ChevronRight, Eye } from 'lucide-react'
+import { v4 as uuidv4 } from 'uuid'
 
 type FileStatus = 'pending' | 'processing' | 'completed' | 'error'
 
@@ -39,6 +40,7 @@ export default function Dashboard() {
     fieldCount: number
     status: 'completed' | 'failed'
   }>>([])
+  const [currentBatchId, setCurrentBatchId] = useState<string | null>(null)
 
   // Generate preview URL when files change
   const currentFile = files[previewIndex]
@@ -96,10 +98,13 @@ export default function Dashboard() {
     }))
     setFileStatuses(initialStatuses)
 
-    // Generate a batch ID for this extraction run
-    const batchId = crypto.randomUUID()
+    setFileStatuses(initialStatuses)
 
     try {
+      // Generate a batch ID for this extraction run
+      const batchId = uuidv4()
+      setCurrentBatchId(batchId)
+
       // Get current user's tenant_id
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Not authenticated')
@@ -544,6 +549,7 @@ export default function Dashboard() {
         onClose={() => setShowSuccessModal(false)}
         filesCount={processedFilesCount}
         processedFiles={processedFilesSummary}
+        batchId={currentBatchId}
       />
     </div>
   )
