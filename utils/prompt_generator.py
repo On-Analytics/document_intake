@@ -2,6 +2,7 @@ from typing import Dict, Any, Optional
 import json
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
+from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache
 
 class SystemPromptOutput(BaseModel):
     system_prompt: str = Field(..., description="The generated system prompt for the extraction task.")
@@ -9,13 +10,32 @@ class SystemPromptOutput(BaseModel):
 def generate_system_prompt(
     document_type: str, 
     schema: Dict[str, Any],
-    structure_hints: Optional[Dict[str, Any]] = None
+    # structure_hints removed to allow caching
 ) -> str:
     """
     Generates a specialized system prompt for extracting data from a specific document type
-    according to a given schema, optionally using structural hints from vision analysis.
+    according to a given schema.
+    
+    Now cached using cache_manager to avoid expensive re-generation.
     """
     
+    # Check Cache
+    cache_key = generate_cache_key(
+        content=None,
+        extra_params={
+            "step": "generate_system_prompt",
+            "document_type": document_type,
+            "schema_hash": str(schema) # Simple string representation of schema for hash
+        }
+    )
+    
+    cached = get_cached_result(cache_key)
+    if cached and "system_prompt" in cached:
+        print(f"[Prompt Generator] Using cached system prompt for '{document_type}'")
+        return cached["system_prompt"]
+    
+    print(f"[Prompt Generator] Generatng NEW system prompt for '{document_type}'...")
+
     # Convert schema to a string representation for the prompt
     schema_str = json.dumps(schema, indent=2)
     
@@ -26,39 +46,20 @@ def generate_system_prompt(
         "Focus on clarity, constraint-setting, and schema alignment."
     )
     
-    # Build structure context from hints
-    structure_context = ""
-    if structure_hints and isinstance(structure_hints, dict):
-        hints_list = []
-        if structure_hints.get("has_tables"):
-            table_cols = structure_hints.get("table_columns", [])
-            col_info = f" with columns: {', '.join(table_cols[:5])}" if table_cols else ""
-            hints_list.append(f"- Document contains {structure_hints.get('table_count', 1)} table(s){col_info}")
-        if structure_hints.get("multi_row_entries"):
-            hints_list.append("- Tables have multi-row entries that need merging")
-        if structure_hints.get("has_multi_column_layout"):
-            hints_list.append("- Document has multi-column layout")
-        if structure_hints.get("section_count", 0) > 0:
-            hints_list.append(f"- Document has {structure_hints['section_count']} sections")
-        
-        if hints_list:
-            structure_context = "\n\nStructural hints from document analysis:\n" + "\n".join(hints_list) + "\n"
+    # Removed specific structure_hints logic here to make prompt generic and cacheable
     
     user_prompt = (
         f"I need a system prompt for an AI that extracts data from a **{document_type}**.\n"
         f"The extraction must strictly follow this JSON schema:\n"
         f"```json\n{schema_str}\n```\n"
-        f"Also consider the following structural hints:\n"
-        f"{structure_context}\n"
         "Instructions for the generated system prompt:\n"
         "1. It must instruct the AI to act as an expert in reading this specific document type.\n"
         "2. It must emphasize extracting nested fields (lists of objects) correctly by inferring structure from descriptions.\n"
         "3. For document types with tables (invoices, receipts, bank statements, forms):\n"
         "   - The AI must handle markdown tables where data may span multiple rows\n"
         "   - The AI must carefully merge multi-row entries into single objects\n"
-        "4. If structural context hints are provided above, incorporate relevant guidance into the prompt.\n"
-        "5. It must enforce strict adherence to the schema keys.\n"
-        "6. The output should be ONLY the system prompt text, ready to be used."
+        "4. It must enforce strict adherence to the schema keys.\n"
+        "5. The output should be ONLY the system prompt text, ready to be used."
     )
 
 
@@ -74,6 +75,10 @@ def generate_system_prompt(
             ],
             config={"run_name": "prompt_generator"},
         )
+        
+        # Save to cache
+        save_to_cache(cache_key, {"system_prompt": result.system_prompt})
+        
         return result.system_prompt
     except Exception as e:
         print(f"Prompt generation failed, using fallback. Error: {e}")

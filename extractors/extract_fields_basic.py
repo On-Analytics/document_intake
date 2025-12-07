@@ -7,6 +7,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, create_model, Field
 
 from core_pipeline import BASE_DIR, DocumentMetadata, _normalize_garbage_characters
+from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache
 
 def _get_python_type(type_str: str) -> Type:
     """Map schema type strings to Python types."""
@@ -63,13 +64,28 @@ def extract_fields_basic(
     Returns a dict where keys match the Pydantic model and schema field names.
     """
 
+    content = _normalize_garbage_characters(document.page_content or "")
     schema = _load_schema(schema_path)
     
+    # Check Cache
+    # Hash the content + schema structure to be safe
+    cache_key = generate_cache_key(
+        content=content,
+        extra_params={
+            "step": "extract_fields_basic", 
+            "schema": schema, 
+            "doc_type": document_type
+        }
+    )
+    
+    cached = get_cached_result(cache_key)
+    if cached:
+        print(f"[{metadata.filename}] Using cached extraction result.")
+        return cached
+
     # Generate the Pydantic model dynamically based on the loaded schema
     DynamicModel = _create_dynamic_model(schema)
     fields: List[Dict[str, Any]] = schema.get("fields", [])
-
-    content = _normalize_garbage_characters(document.page_content or "")
 
     field_lines = []
     for field in fields:
@@ -82,8 +98,14 @@ def extract_fields_basic(
 
     # Generate dynamic system prompt based on doc type and schema
     print(f"[{metadata.filename}] Generating dynamic system prompt for type: '{document_type}'...")
+    # NOTE: structure_hints removed from here to allow caching
     system_prompt = generate_system_prompt(document_type, schema)
 
+    # Injecting structure hints into the User Prompt instead of System Prompt
+    hint_text = ""
+    # Check if structure_hints was passed via kwargs or we could add it to signature
+    # (For now, basic workflow usually has no hints, but we support consistency)
+    
     user_prompt = (
         "Extract the following fields from the document. If a field is not present, "
         "set it to null or an empty list as appropriate. Do not invent data.\n\n"
@@ -108,5 +130,8 @@ def extract_fields_basic(
         ],
         config={"run_name": "extract_fields_basic"},
     )
+    
+    result = model.model_dump()
+    save_to_cache(cache_key, result)
 
-    return model.model_dump()
+    return result

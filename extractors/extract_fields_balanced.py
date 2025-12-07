@@ -51,6 +51,7 @@ def _load_schema(schema_path: Path) -> Dict[str, Any]:
         return json.load(f)
 
 
+from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache
 from utils.prompt_generator import generate_system_prompt
 
 def extract_fields_balanced(
@@ -65,19 +66,34 @@ def extract_fields_balanced(
     
     Uses markdown_content if available (from vision step), otherwise falls back to raw text.
     """
-
+    
+    # Check Cache
+    # We cache based on content (raw or markdown), schema, and hints.
+    content_to_use = markdown_content if markdown_content else (document.page_content or "")
     schema = _load_schema(schema_path)
     
+    cache_key = generate_cache_key(
+        content=content_to_use,
+        extra_params={
+            "step": "extract_fields_balanced",
+            "schema": schema,
+            "doc_type": document_type,
+            "hints": structure_hints
+        }
+    )
+    
+    cached = get_cached_result(cache_key)
+    if cached:
+        print(f"[{metadata.filename}] Using cached extraction result (Balanced).")
+        return cached
+
     # Generate the Pydantic model dynamically based on the loaded schema
     DynamicModel = _create_dynamic_model(schema)
     fields: List[Dict[str, Any]] = schema.get("fields", [])
 
-    # Prefer markdown content from vision step, fallback to raw text
     if markdown_content:
-        content_to_use = markdown_content
         print(f"[{metadata.filename}] Extracting from Markdown content (Length: {len(content_to_use)})")
     else:
-        content_to_use = document.page_content or ""
         print(f"[{metadata.filename}] Extracting from Raw Text content (Length: {len(content_to_use)})")
 
     field_lines = []
@@ -89,9 +105,27 @@ def extract_fields_balanced(
 
     fields_block = "\n".join(field_lines)
 
-    # Generate dynamic system prompt based on doc type, schema, and structure hints
+    # Generate dynamic system prompt based on doc type and schema (NO HINTS here now)
     print(f"[{metadata.filename}] Generating dynamic system prompt for type: '{document_type}'...")
-    system_prompt = generate_system_prompt(document_type, schema, structure_hints)
+    system_prompt = generate_system_prompt(document_type, schema)
+    
+    # Inject Structure Hints into User Prompt
+    structure_context = ""
+    if structure_hints and isinstance(structure_hints, dict):
+        hints_list = []
+        if structure_hints.get("has_tables"):
+            table_cols = structure_hints.get("table_columns", [])
+            col_info = f" with columns: {', '.join(table_cols[:5])}" if table_cols else ""
+            hints_list.append(f"- Document contains {structure_hints.get('table_count', 1)} table(s){col_info}")
+        if structure_hints.get("multi_row_entries"):
+            hints_list.append("- Tables have multi-row entries that need merging")
+        if structure_hints.get("has_multi_column_layout"):
+            hints_list.append("- Document has multi-column layout")
+        if structure_hints.get("section_count", 0) > 0:
+            hints_list.append(f"- Document has {structure_hints['section_count']} sections")
+        
+        if hints_list:
+            structure_context = "\n\nStructural hints from document analysis:\n" + "\n".join(hints_list) + "\n"
 
     user_prompt = (
         "Extract the following fields from the document. If a field is not present, "
@@ -99,6 +133,7 @@ def extract_fields_balanced(
         f"Document filename: {metadata.filename}\n\n"
         "Schema fields (name and description):\n"
         f"{fields_block}\n\n"
+        f"Also consider the following structural hints:{structure_context}\n\n"
         "Return a single JSON object where each key is exactly one of the field "
         "names above.\n\n"
         "Document content begins below this line:\n"
@@ -121,5 +156,8 @@ def extract_fields_balanced(
         ],
         config={"run_name": "extract_fields_balanced"},
     )
+    
+    result = model.model_dump()
+    save_to_cache(cache_key, result)
 
-    return model.model_dump()
+    return result

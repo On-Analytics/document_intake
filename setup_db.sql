@@ -299,8 +299,12 @@ CREATE TABLE IF NOT EXISTS public.extraction_results (
   status TEXT DEFAULT 'completed', -- completed, failed
   error_message TEXT,
   result_storage_path TEXT, -- Path to stored result file (if we store files)
+  batch_id UUID, -- ID for the extraction batch
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- Index for batch_id
+CREATE INDEX IF NOT EXISTS idx_extraction_results_batch_id ON public.extraction_results(batch_id);
 
 -- Enable Row Level Security
 ALTER TABLE public.extraction_results ENABLE ROW LEVEL SECURITY;

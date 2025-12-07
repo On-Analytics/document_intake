@@ -190,7 +190,15 @@ async def run_workflow_async(
     # If doc_type is NOT 'auto', validate it immediately
     if doc_type != "auto" and doc_type not in WORKFLOW_REGISTRY:
         raise ValueError(f"Unknown document type: {doc_type}")
-        
+    
+    import os
+    env_max = os.getenv("MAX_CONCURRENT_DOCS")
+    if env_max:
+        try:
+            max_concurrent = int(env_max)
+        except ValueError:
+            pass
+            
     semaphore = asyncio.Semaphore(max_concurrent)
     tasks = []
     

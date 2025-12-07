@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from core_pipeline import DocumentMetadata, _normalize_garbage_characters
 from utils.image_utils import convert_pdf_to_images
+from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache
 
 
 class MarkdownOutput(BaseModel):
@@ -80,6 +81,18 @@ def vision_generate_markdown(
     Ideal for PDFs with complex layouts (columns, sidebars) that text extraction misses.
     Falls back to text-only mode if image conversion is not possible.
     """
+    
+    # Check cache first
+    # Key includes filename and file stats (via file_path) to detect changes
+    cache_key = generate_cache_key(
+        file_path=str(metadata.file_path),
+        extra_params={"step": "vision_generate_markdown", "model": os.getenv("VISION_MODEL", "gpt-4o-mini")}
+    )
+    
+    cached = get_cached_result(cache_key)
+    if cached:
+        print(f"[{metadata.filename}] Using cached markdown result.")
+        return cached
 
     system_prompt_text = (
         "You are an expert document summarizer and formatter. "
@@ -159,9 +172,14 @@ def vision_generate_markdown(
     structure_hints = _analyze_markdown_structure(markdown_content)
     
     print(f"[{metadata.filename}] Structure hints: {structure_hints}")
-
-    return {
+    
+    result = {
         "markdown_content": markdown_content,
         "structure_hints": structure_hints
     }
+    
+    # Save to cache
+    save_to_cache(cache_key, result)
+
+    return result
 

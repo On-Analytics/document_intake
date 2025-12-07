@@ -1,30 +1,48 @@
-# React + TypeScript + Vite
+# Document Intake & Schema Manager
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This project is a document intake and schema management service. It provides:
 
-Currently, two official plugins are available:
+- A **Python backend** for orchestrating document processing workflows.
+- A **React + TypeScript + Vite frontend** for uploading documents and managing schemas.
+- A set of **JSON templates** describing common document types.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Project Structure
 
-## Expanding the ESLint configuration
+- `main.py`, `core_pipeline.py`, `workflows.py` – backend entrypoint and processing logic.
+- `src/` – React frontend (Vite + TypeScript).
+- `templates/` – JSON templates used to define extraction schemas.
 
-If you are developing a production application, we recommend updating the configuration to enable type aware lint rules:
+## Templates
 
-- Configure the top-level `parserOptions` property like this:
+The `templates/` folder contains simple JSON schema definitions for common document types, including:
 
-```js
-export default {
-  // other rules...
-  parserOptions: {
-    ecmaVersion: 'latest',
-    sourceType: 'module',
-    project: ['./tsconfig.json', './tsconfig.node.json'],
-    tsconfigRootDir: __dirname,
-  },
-}
+- `claim_schema.json`
+- `invoice_schema.json`
+- `resume_schema.json`
+- `purchase_order_schema.json`
+- `bank_statement_schema.json`
+
+Each file declares a `document_type`, a short `description`, and a list of `fields` with basic metadata.
+
+## Running the Backend
+
+Create and activate a virtual environment, install dependencies, and run the API server (for example, with Uvicorn):
+
+```bash
+pip install -r requirements.txt
+uvicorn main:app --reload
 ```
 
-- Replace `plugin:@typescript-eslint/recommended` to `plugin:@typescript-eslint/recommended-type-checked` or `plugin:@typescript-eslint/strict-type-checked`
-- Optionally add `plugin:@typescript-eslint/stylistic-type-checked`
-- Install [eslint-plugin-react](https://github.com/jsx-eslint/eslint-plugin-react) and add `plugin:react/recommended` & `plugin:react/jsx-runtime` to the `extends` list
+Adjust the command if your entrypoint or module path differs.
+
+## Running the Frontend
+
+Install Node dependencies and start the Vite dev server from the project root:
+
+```bash
+npm install
+npm run dev
+```
+
+Then open the printed local URL in your browser.
+

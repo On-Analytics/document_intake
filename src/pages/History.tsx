@@ -15,6 +15,7 @@ interface ExtractionResult {
   status: string
   error_message: string
   created_at: string
+  batch_id?: string
 }
 
 interface StoredResult {
@@ -30,9 +31,29 @@ export default function History() {
   const { data: results, isLoading } = useQuery({
     queryKey: ['extraction-results'],
     queryFn: async () => {
+      // 1. Get the latest batch_id
+      const { data: latest } = await supabase
+        .from('extraction_results')
+        .select('batch_id')
+        .not('batch_id', 'is', null) // Filter out legacy records without batch_id
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+
+      if (!latest?.batch_id) {
+        // Fallback: If no batched results exist, return empty or handle legacy
+        // For now, let's return [] to strictly follow "only need to see the ones recently processed"
+        // OR we can return the last 10 records as a fallback?
+        // User request: "only need to see the ones recently processed in the current extraction"
+        // If there is no current extraction (with batch_id), showing nothing is technically correct.
+        return []
+      }
+
+      // 2. Fetch results for that batch
       const { data, error } = await supabase
         .from('extraction_results')
         .select('*')
+        .eq('batch_id', latest.batch_id)
         .order('created_at', { ascending: false })
 
       if (error) throw error
@@ -240,8 +261,8 @@ export default function History() {
                     {/* Header */}
                     <div
                       className={`p-8 cursor-pointer ${isSuccess
-                          ? 'bg-green-50/50 border-b border-gray-200'
-                          : 'bg-red-50/50 border-b border-gray-200'
+                        ? 'bg-green-50/50 border-b border-gray-200'
+                        : 'bg-red-50/50 border-b border-gray-200'
                         }`}
                       onClick={() => toggleExpanded(result.id)}
                     >

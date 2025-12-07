@@ -1,11 +1,12 @@
 from typing import Literal, Dict, Optional
 import hashlib
-from functools import lru_cache
+# from functools import lru_cache # Removed in favor of cache_manager
 from langchain_core.documents import Document
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from core_pipeline import _normalize_garbage_characters
+from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache
 
 class RouterOutput(BaseModel):
     workflow: Literal["basic", "balanced"] = Field(
@@ -16,14 +17,6 @@ class RouterOutput(BaseModel):
         ...,
         description="The specific type of the document (e.g., 'resume', 'invoice', 'receipt', 'contract', 'form', 'article', 'generic')."
     )
-
-@lru_cache(maxsize=100)
-def _get_cached_route(content_hash: str, snippet: str) -> Optional[Dict[str, str]]:
-    """
-    Cache wrapper for routing decisions. 
-    The actual logic is inside _make_llm_decision to allow caching based on hash.
-    """
-    return _make_llm_decision(snippet)
 
 
 def _make_llm_decision(snippet: str) -> Dict[str, str]:
@@ -75,7 +68,7 @@ def _make_llm_decision(snippet: str) -> Dict[str, str]:
 def route_document(document: Document) -> Dict[str, str]:
     """
     Determines which workflow to use and classifies the document type.
-    Uses heuristics and caching to minimize LLM calls.
+    Uses persistent caching to minimize LLM calls.
     
     Returns:
         {"workflow": "basic"|"balanced", "document_type": str}
@@ -91,19 +84,25 @@ def route_document(document: Document) -> Dict[str, str]:
     content = _normalize_garbage_characters(document.page_content or "")
     snippet = content[:4000]
     
-    # 3. Check Cache
-    # Create a hash of the snippet to use as cache key
-    content_hash = hashlib.md5(snippet.encode("utf-8")).hexdigest()
+    # 3. Check Persistence Cache
+    cache_key = generate_cache_key(
+        content=snippet,
+        extra_params={"step": "router_decision"}
+    )
     
-    # We use a helper function to leverage @lru_cache
-    # Note: We don't check if it's in cache explicitly, lru_cache handles it.
-    # But we want to log if it was a cache hit.
-    
-    # To detect cache hit without accessing internal API, we can just call it.
-    # Ideally, we'd wrap this better, but for now, let's just use the cached function.
+    cached = get_cached_result(cache_key)
+    if cached:
+        print(f"[{source}] Using cached routing decision: {cached['workflow']} / {cached['document_type']}")
+        return cached
     
     # Optimization: If snippet is very short, default to basic
     if len(snippet.strip()) < 50:
          return {"workflow": "basic", "document_type": "generic"}
 
-    return _get_cached_route(content_hash, snippet)
+    # 4. Make LLM Decision
+    decision = _make_llm_decision(snippet)
+    
+    # Save to cache
+    save_to_cache(cache_key, decision)
+    
+    return decision
