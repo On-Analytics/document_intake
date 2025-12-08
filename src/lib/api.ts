@@ -23,7 +23,7 @@ export async function uploadDocument(file: File, schemaId?: string) {
 
     const { data: schema, error } = await supabase
       .from('schemas')
-      .select('content')
+      .select('content, document_type')
       .eq('id', schemaId)
       .single()
 
@@ -35,6 +35,11 @@ export async function uploadDocument(file: File, schemaId?: string) {
     if (schema && schema.content) {
       console.log('Adding schema content to request')
       formData.append('schema_content', JSON.stringify(schema.content))
+    }
+
+    if (schema && schema.document_type) {
+      console.log('Adding document_type to request:', schema.document_type)
+      formData.append('document_type', schema.document_type)
     }
   }
 

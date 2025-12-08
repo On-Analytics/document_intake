@@ -84,6 +84,12 @@ export default function Dashboard() {
   const handleExtract = async () => {
     if (files.length === 0) return
 
+    // Require a template/schema to be selected; backend no longer supports auto-schema mode
+    if (!selectedSchemaId) {
+      setErrorMsg('Please select a template before extracting.')
+      return
+    }
+
     console.log('Starting extraction for', files.length, 'files')
     console.log('Selected schema ID:', selectedSchemaId)
 
@@ -291,7 +297,7 @@ export default function Dashboard() {
                 <Dropzone selectedFiles={files} onFilesSelect={setFiles} />
               </div>
 
-              {/* Step 2: Choose Template */}
+              {/* Step 2: Choose Template (Required) */}
               <div className={`p-5 border-b border-gray-100 transition-opacity ${files.length === 0 ? 'opacity-50' : 'opacity-100'}`}>
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3">
@@ -300,7 +306,7 @@ export default function Dashboard() {
                     </div>
                     <div>
                       <h2 className="text-base font-semibold text-dark">Choose Template</h2>
-                      <p className="text-xs text-gray-500">Optional - defaults to auto-detect</p>
+                      <p className="text-xs text-gray-500">Required - select a template/schema to run extraction</p>
                     </div>
                   </div>
                   <button
@@ -314,19 +320,6 @@ export default function Dashboard() {
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={() => setSelectedSchemaId('')}
-                    disabled={files.length === 0}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-all disabled:cursor-not-allowed ${selectedSchemaId === ''
-                      ? 'border-primary bg-primary/10 text-dark'
-                      : 'border-gray-200 bg-white hover:border-primary/30 text-gray-700'
-                      }`}
-                  >
-                    <Sparkles className={`h-4 w-4 ${selectedSchemaId === '' ? 'text-primary' : 'text-gray-400'}`} />
-                    <span className="font-medium text-sm">Auto-detect</span>
-                    {selectedSchemaId === '' && <Check className="h-3.5 w-3.5 text-primary" />}
-                  </button>
-
                   {schemas?.map(schema => (
                     <button
                       key={schema.id}
@@ -369,8 +362,9 @@ export default function Dashboard() {
                       <p className="text-xs text-gray-500">
                         {files.length === 0
                           ? 'Upload files to continue'
-                          : `${files.length} file${files.length > 1 ? 's' : ''} ready • ${selectedSchemaId ? schemas?.find(s => s.id === selectedSchemaId)?.name : 'Auto-detect'}`
-                        }
+                          : selectedSchemaId
+                            ? `${files.length} file${files.length > 1 ? 's' : ''} ready • ${schemas?.find(s => s.id === selectedSchemaId)?.name ?? 'Template selected'}`
+                            : 'Select a template to continue'}
                       </p>
                     </div>
                   </div>
@@ -385,7 +379,7 @@ export default function Dashboard() {
                     )}
                     <button
                       onClick={handleExtract}
-                      disabled={files.length === 0 || status === 'processing'}
+                      disabled={files.length === 0 || status === 'processing' || !selectedSchemaId}
                       className="flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-dark hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                     >
                       {status === 'processing' ? (

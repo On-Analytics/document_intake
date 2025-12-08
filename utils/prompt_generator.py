@@ -1,5 +1,6 @@
 from typing import Dict, Any, Optional
 import json
+import hashlib
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache
@@ -19,14 +20,20 @@ def generate_system_prompt(
     Now cached using cache_manager to avoid expensive re-generation.
     """
     
+    # Compute a stable hash of the schema based on canonical JSON
+    # This ensures that logically identical schemas (e.g., from templates or Supabase)
+    # map to the same cache key, even if key order differs.
+    schema_canonical = json.dumps(schema, sort_keys=True, separators=(",", ":"))
+    schema_hash = hashlib.sha256(schema_canonical.encode("utf-8")).hexdigest()
+
     # Check Cache
     cache_key = generate_cache_key(
         content=None,
         extra_params={
             "step": "generate_system_prompt",
             "document_type": document_type,
-            "schema_hash": str(schema) # Simple string representation of schema for hash
-        }
+            "schema_hash": schema_hash,
+        },
     )
     
     cached = get_cached_result(cache_key)

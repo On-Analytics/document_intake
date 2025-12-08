@@ -11,6 +11,9 @@ from typing import Optional, Dict, Any
 import json
 
 from router import route_document
+from templates_registry import TEMPLATES, TemplateConfig
+from template_metadata import get_template_metadata, upsert_template_metadata
+from supabase_sync import update_schema_document_type
 from langchain_community.document_loaders import PDFPlumberLoader, TextLoader, Docx2txtLoader
 from langchain_core.documents import Document
 
@@ -41,7 +44,8 @@ async def root():
 async def process_document(
     file: UploadFile = File(...),
     schema_id: Optional[str] = Form(None),
-    schema_content: Optional[str] = Form(None)
+    schema_content: Optional[str] = Form(None),
+    document_type: Optional[str] = Form(None),
 ):
     """
     Upload a file, process it immediately, and return results.
@@ -103,11 +107,23 @@ async def process_document(
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {suffix}")
 
+        # 3b. If the client/template explicitly provided a document_type
+        # (e.g., from the Supabase schemas table), let that override the
+        # router's inferred type. This makes the schemas table the primary
+        # source of truth for template document_type.
+        if document_type:
+            doc_type = document_type
+
         # 4. Select Schema
         # Load schema from templates directory
         templates_dir = Path(__file__).parent / "templates"
 
         schema_dict = None
+        template_cfg: TemplateConfig | None = None  # type: ignore[valid-type]
+
+        if schema_id:
+            # Look up built-in template configuration when a schema_id is provided.
+            template_cfg = TEMPLATES.get(schema_id)  # type: ignore[assignment]
 
         if schema_content:
             # Use schema content provided from frontend
@@ -116,41 +132,66 @@ async def process_document(
                 schema_dict = json.loads(schema_content)
             except json.JSONDecodeError as e:
                 raise HTTPException(status_code=400, detail=f"Invalid schema JSON: {str(e)}")
+
+            if schema_id and template_cfg is None:
+                # User / cloned template coming from Supabase (schema_content provided).
+                # Supabase schemas.document_type is the source of truth when present
+                # (passed in via the document_type form field). Only fall back to
+                # template_metadata.json when document_type was not provided.
+                meta = get_template_metadata(schema_id)
+
+                if not document_type and meta and isinstance(meta, dict) and "document_type" in meta:
+                    # No explicit document_type from DB; reuse previously stored value.
+                    doc_type = str(meta["document_type"])
+
+                # Ensure local metadata stays in sync with the final doc_type.
+                if not meta or not isinstance(meta, dict) or meta.get("document_type") != doc_type:
+                    upsert_template_metadata(template_id=schema_id, document_type=doc_type)
+
+                # Best-effort sync into Supabase schemas.document_type so that
+                # future runs can rely solely on the schemas table.
+                update_schema_document_type(schema_id, doc_type)
+
         elif schema_id:
-            # Try to load schema file by ID (legacy support)
-            schema_file = templates_dir / f"{schema_id}.json"
-            if not schema_file.exists():
-                raise HTTPException(status_code=404, detail="Schema not found")
-
-            with schema_file.open("r") as f:
-                schema_dict = json.load(f)
-        else:
-            # AUTO-DETECT: Use template based on Router Result
-            print(f"Auto-detecting schema for type: {doc_type}")
-
-            # Map router types to schema files
-            type_mapping = {
-                "receipt": "invoice",
-                "invoice": "invoice",
-                "claim": "claim",
-                "resume": "resume",
-            }
-            target_type = type_mapping.get(doc_type, "claim")
-
-            schema_file = templates_dir / f"{target_type}_schema.json"
-
-            if schema_file.exists():
-                print(f"Found template schema for '{target_type}'")
-                with schema_file.open("r") as f:
-                    schema_dict = json.load(f)
-            else:
-                # Fallback to claim schema
-                print(f"No template found for '{target_type}', falling back to claim")
-                schema_file = templates_dir / "claim_schema.json"
+            if template_cfg is not None:
+                # Built-in template: load schema from templates directory
+                schema_file = templates_dir / template_cfg.schema_filename
                 if not schema_file.exists():
-                    raise HTTPException(status_code=404, detail="No appropriate schema found")
+                    raise HTTPException(status_code=404, detail="Schema not found for template")
+
                 with schema_file.open("r") as f:
                     schema_dict = json.load(f)
+
+                # Override router-detected document type with template's document_type
+                doc_type = template_cfg.document_type
+            else:
+                # User / cloned template stored on disk: look for stored metadata first
+                meta = get_template_metadata(schema_id)
+
+                if meta and isinstance(meta, dict) and "document_type" in meta:
+                    # Use previously learned/stored document_type
+                    doc_type = str(meta["document_type"])
+                else:
+                    # First time this template is used: keep router's document_type
+                    # and persist it so future runs don't need to infer doc_type again
+                    upsert_template_metadata(template_id=schema_id, document_type=doc_type)
+
+                # Best-effort sync into Supabase schemas.document_type
+                update_schema_document_type(schema_id, doc_type)
+
+                # Load schema file by ID (user/cloned template stored on disk)
+                schema_file = templates_dir / f"{schema_id}.json"
+                if not schema_file.exists():
+                    raise HTTPException(status_code=404, detail="Schema not found")
+
+                with schema_file.open("r") as f:
+                    schema_dict = json.load(f)
+        else:
+            # Auto-schema mode is disabled: user must always select a template/schema
+            raise HTTPException(
+                status_code=400,
+                detail="No schema/template provided. Please select a template or send schema_content.",
+            )
 
         # Write Schema to Temp File
         # Extractors expect a file path, so we dump the JSON content to a temp file
@@ -208,7 +249,28 @@ async def process_document(
                 document_type=doc_type
             )
 
-        # 6. Build Response
+        # 6. Optional: Log this run for observability (does not affect behavior)
+        try:
+            # Use schema_id when provided; otherwise note whether schema was auto-selected or inline
+            effective_schema_id = schema_id
+            if not effective_schema_id:
+                if schema_content:
+                    effective_schema_id = "inline-schema"
+                else:
+                    effective_schema_id = "auto-schema"
+
+            log_run(
+                content=router_doc.page_content or "",
+                document_type=doc_type,
+                schema_id=effective_schema_id,
+                workflow=workflow_name,
+                filename=file.filename,
+            )
+        except Exception:
+            # Never let logging break the main flow
+            pass
+
+        # 7. Build Response
         # For non-PDF types, we treat the document as a single logical page for now.
         op_metadata = {
             "page_count": len(docs) if is_pdf else 1,
