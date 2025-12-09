@@ -133,8 +133,8 @@ async def process_document(
             except json.JSONDecodeError as e:
                 raise HTTPException(status_code=400, detail=f"Invalid schema JSON: {str(e)}")
 
-            if schema_id and template_cfg is None:
-                # User / cloned template coming from Supabase (schema_content provided).
+            if schema_id:
+                # Template coming from Supabase (schema_content provided).
                 # Supabase schemas.document_type is the source of truth when present
                 # (passed in via the document_type form field). Only fall back to
                 # template_metadata.json when document_type was not provided.
