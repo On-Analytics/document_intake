@@ -6,7 +6,12 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from core_pipeline import _normalize_garbage_characters
-from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache
+from utils.cache_manager import (
+    ROUTER_CACHE_DIR,
+    generate_cache_key,
+    get_cached_result,
+    save_to_cache,
+)
 
 class RouterOutput(BaseModel):
     workflow: Literal["basic", "balanced"] = Field(
@@ -94,9 +99,9 @@ def route_document(document: Document, schema_id: Optional[str] = None) -> Dict[
     # 4. Check Persistence Cache
     cache_key = generate_cache_key(
         content=snippet,
-        extra_params={"step": "router_decision", "schema_id": schema_id}
+        extra_params={"schema_id": schema_id}
     )
-    cached = get_cached_result(cache_key)
+    cached = get_cached_result(cache_key, cache_dir=ROUTER_CACHE_DIR)
     if cached:
         print(f"[{source}] Using cached routing decision")
         return cached
@@ -116,7 +121,11 @@ def route_document(document: Document, schema_id: Optional[str] = None) -> Dict[
         update_schema_document_type(schema_id, decision["document_type"])
     
     # 8. Save to cache
-    save_to_cache(cache_key, {"workflow": decision["workflow"], "document_type": final_doc_type})
+    save_to_cache(
+        cache_key,
+        {"workflow": decision["workflow"], "document_type": final_doc_type},
+        cache_dir=ROUTER_CACHE_DIR,
+    )
     
     return {"workflow": decision["workflow"], "document_type": final_doc_type}
 

@@ -1,0 +1,16 @@
+{
+  "markdown_content": "# SuperStore Invoice\n\n**Invoice Number:** 36258  \n**Date:** Mar 06, 2012  \n**Ship Mode:** First Class  \n\n## Bill To\n**Name:** Aaron Bergman  \n**Address:** 98103, Seattle, Washington, United States  \n\n## Balance Due\n**Amount:** $50.10  \n\n## Itemized List\n| Item                                      | Quantity | Rate   | Amount  |\n|-------------------------------------------|----------|--------|---------|\n| Global Push Button Manager's Chair, Indigo | 1        | $48.71 | $48.71  |\n\n## Summary\n| Description       | Amount  |\n|-------------------|---------|\n| Subtotal          | $48.71  |\n| Discount (20%)    | -$9.74  |\n| Shipping          | $11.13  |\n| **Total**        | **$50.10** |\n\n## Notes\nThanks for your business!\n\n## Terms\nOrder ID: CA-2012-AB10015140-40974  \n",
+  "structure_hints": {
+    "has_tables": true,
+    "table_count": 2,
+    "table_columns": [
+      "Item",
+      "Quantity",
+      "Rate",
+      "Amount"
+    ],
+    "multi_row_entries": false,
+    "has_multi_column_layout": true,
+    "section_count": 7
+  }
+}

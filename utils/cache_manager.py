@@ -4,12 +4,12 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
-# Define cache directory relative to project root or use a temp dir
-# We use a hidden .cache folder in the document_intake directory
-CACHE_DIR = Path(__file__).parent.parent / ".cache"
+# Define cache directories
+CACHE_DIR = Path(__file__).parent.parent / ".cache"  # Prompts
+ROUTER_CACHE_DIR = Path(__file__).parent.parent / ".router_cache"
 
-def _ensure_cache_dir():
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+def _ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
 
 def generate_cache_key(
     file_path: Optional[str] = None, 
@@ -38,6 +38,8 @@ def generate_cache_key(
             components.append(f"step:{extra_params['step']}")
         if "document_type" in extra_params:
             components.append(f"doc_type:{extra_params['document_type']}")
+        if "schema_id" in extra_params:
+            components.append(f"schema_id:{extra_params['schema_id']}")
         if "schema" in extra_params:
             schema_str = json.dumps(extra_params["schema"], sort_keys=True, separators=(",", ":"))
             components.append(f"schema_hash:{hashlib.sha256(schema_str.encode('utf-8')).hexdigest()}")
@@ -48,10 +50,10 @@ def generate_cache_key(
     combined = "|".join(sorted(components))
     return hashlib.sha256(combined.encode("utf-8")).hexdigest()
 
-def get_cached_result(key: str) -> Optional[Dict[str, Any]]:
+def get_cached_result(key: str, cache_dir: Path = CACHE_DIR) -> Optional[Dict[str, Any]]:
     """Retrieve result from cache if it exists."""
-    _ensure_cache_dir()
-    cache_file = CACHE_DIR / f"{key}.json"
+    _ensure_dir(cache_dir)
+    cache_file = cache_dir / f"{key}.json"
     
     if cache_file.exists():
         try:
@@ -61,10 +63,10 @@ def get_cached_result(key: str) -> Optional[Dict[str, Any]]:
             return None
     return None
 
-def save_to_cache(key: str, data: Dict[str, Any]) -> None:
+def save_to_cache(key: str, data: Dict[str, Any], cache_dir: Path = CACHE_DIR) -> None:
     """Save result to cache."""
-    _ensure_cache_dir()
-    cache_file = CACHE_DIR / f"{key}.json"
+    _ensure_dir(cache_dir)
+    cache_file = cache_dir / f"{key}.json"
     
     try:
         with cache_file.open("w", encoding="utf-8") as f:
