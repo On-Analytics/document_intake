@@ -97,9 +97,6 @@ export default function Dashboard() {
   const handleExtract = async () => {
     if (files.length === 0) return
 
-    console.log('Starting extraction for', files.length, 'files')
-    console.log('Selected schema ID:', selectedSchemaId)
-
     setStatus('processing')
     setErrorMsg(null)
     setProcessingProgress({ current: 0, total: files.length })
@@ -137,7 +134,6 @@ export default function Dashboard() {
 
       // Process all files in parallel for faster results
       const uploadPromises = files.map(async (file, index) => {
-        console.log(`Starting upload for file ${index + 1}/${files.length}:`, file.name)
 
         // Update status to processing
         setFileStatuses(prev => prev.map(fs =>
@@ -146,7 +142,6 @@ export default function Dashboard() {
 
         try {
           const data = await uploadDocument(file, selectedSchemaId || undefined)
-          console.log(`Successfully processed ${file.name}:`, data)
 
           // Save metadata to database
           const { data: savedResult } = await supabase.from('extraction_results').insert({
@@ -167,11 +162,9 @@ export default function Dashboard() {
               results: data.results,
               operational_metadata: data.operational_metadata
             }
-            console.log('Saving to localStorage:', storageKey, dataToStore)
             localStorage.setItem(storageKey, JSON.stringify(dataToStore))
-            console.log('Saved successfully. Verifying:', localStorage.getItem(storageKey) !== null)
           } else {
-            console.error('No savedResult returned from database insert')
+            // If the DB insert did not return a row, we still treat the extraction as completed
           }
 
           // Update status to completed
@@ -182,7 +175,6 @@ export default function Dashboard() {
 
           return { file: file.name, success: true, data, resultId: savedResult?.id }
         } catch (err: any) {
-          console.error(`Error processing ${file.name}:`, err)
 
           // Save error metadata to database
           await supabase.from('extraction_results').insert({
@@ -206,9 +198,7 @@ export default function Dashboard() {
       })
 
       // Wait for all uploads to complete
-      console.log('Waiting for all uploads to complete...')
       const processedResults = await Promise.all(uploadPromises)
-      console.log('All uploads completed:', processedResults)
       
       const hasError = processedResults.some(r => !r.success)
 
@@ -231,7 +221,6 @@ export default function Dashboard() {
         handleReset()
       }
     } catch (err: any) {
-      console.error('Fatal error during extraction:', err)
       setStatus('idle')
       setErrorMsg(err.message || 'An unexpected error occurred')
     }

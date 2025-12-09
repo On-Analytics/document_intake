@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query'
 import { useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { FileText, Calendar, Clock, CheckCircle, AlertCircle, Code, ChevronDown, ChevronRight, FileJson, FileSpreadsheet } from 'lucide-react'
-import '../utils/debugStorage'
 
 interface ExtractionResult {
   id: string
@@ -80,27 +79,21 @@ export default function History() {
   // Load all results from localStorage when results are fetched
   useEffect(() => {
     if (results && results.length > 0) {
-      console.log('Loading results from localStorage. Total results:', results.length)
       const newLoadedResults = new Map<string, StoredResult>()
 
       results.forEach(result => {
         const storageKey = `extraction_result_${result.id}`
-        console.log('Looking for:', storageKey)
         const stored = localStorage.getItem(storageKey)
         if (stored) {
           try {
             const parsed = JSON.parse(stored)
             newLoadedResults.set(result.id, parsed)
-            console.log('✓ Loaded:', storageKey)
-          } catch (e) {
-            console.error(`Failed to parse stored result for ${result.id}:`, e)
+          } catch {
+            // Ignore malformed localStorage entries
           }
-        } else {
-          console.warn('✗ Not found in localStorage:', storageKey)
         }
       })
 
-      console.log('Total loaded from localStorage:', newLoadedResults.size)
       setLoadedResults(newLoadedResults)
     }
   }, [results])

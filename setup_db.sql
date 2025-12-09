@@ -334,3 +334,26 @@ CREATE INDEX IF NOT EXISTS idx_extraction_results_tenant_id ON public.extraction
 CREATE INDEX IF NOT EXISTS idx_extraction_results_created_at ON public.extraction_results(created_at DESC);
 
 
+-- ----------------------------------------------------------------
+-- Prompt Cache Table (For Persistent System Prompt Caching)
+-- This table stores generated system prompts to avoid expensive LLM calls
+-- ----------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS public.prompt_cache (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  cache_key TEXT UNIQUE NOT NULL, -- Hash of document_type + schema_hash
+  document_type TEXT NOT NULL, -- e.g., "invoice", "resume"
+  schema_hash TEXT NOT NULL, -- SHA256 hash of the schema content
+  system_prompt TEXT NOT NULL, -- The generated system prompt
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Index for fast lookups by cache_key
+CREATE INDEX IF NOT EXISTS idx_prompt_cache_cache_key ON public.prompt_cache(cache_key);
+
+-- Index for querying by document_type (useful for analytics)
+CREATE INDEX IF NOT EXISTS idx_prompt_cache_document_type ON public.prompt_cache(document_type);
+
+-- No RLS needed - prompt cache is shared across all tenants (system-level cache)
+-- The prompts are generic and don't contain tenant-specific data
+

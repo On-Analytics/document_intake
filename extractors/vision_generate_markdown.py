@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from core_pipeline import DocumentMetadata, _normalize_garbage_characters
 from utils.image_utils import convert_pdf_to_images
-from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache
+from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache, VISION_CACHE_DIR
 
 
 class MarkdownOutput(BaseModel):
@@ -88,9 +88,8 @@ def vision_generate_markdown(
         extra_params={"step": "vision_generate_markdown", "model": os.getenv("VISION_MODEL", "gpt-4o-mini")}
     )
     
-    cached = get_cached_result(cache_key)
+    cached = get_cached_result(cache_key, cache_dir=VISION_CACHE_DIR)
     if cached:
-        print(f"[{metadata.filename}] Using cached markdown result.")
         return cached
 
     system_prompt_text = (
@@ -122,13 +121,11 @@ def vision_generate_markdown(
             with open(metadata.file_path, "rb") as image_file:
                 encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
                 images = [encoded_string]
-        except Exception as e:
-            print(f"Error reading image file: {e}")
+        except Exception:
             images = []
 
     if images:
         # Vision Path
-        print(f"Using Vision Generator for {metadata.filename} ({len(images)} pages)")
         content_parts = [
             {
                 "type": "text",
@@ -158,7 +155,6 @@ def vision_generate_markdown(
         )
     else:
         # No images available (not a PDF or conversion failed)
-        print(f"Skipping Vision Generator for {metadata.filename} (No images)")
         return {"markdown_content": "", "structure_hints": {}}
 
     model = llm.invoke(
@@ -170,14 +166,12 @@ def vision_generate_markdown(
     markdown_content = model.markdown_content
     structure_hints = _analyze_markdown_structure(markdown_content)
     
-    print(f"[{metadata.filename}] Structure hints: {structure_hints}")
-    
     result = {
         "markdown_content": markdown_content,
         "structure_hints": structure_hints
     }
     
     # Save to cache
-    save_to_cache(cache_key, result)
+    save_to_cache(cache_key, result, cache_dir=VISION_CACHE_DIR)
 
     return result

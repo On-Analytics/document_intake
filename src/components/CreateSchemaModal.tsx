@@ -51,8 +51,8 @@ export default function CreateSchemaModal({ isOpen, onClose, onSuccess, initialD
         setFields(parsed.fields || [{ name: 'field_1', type: 'string', description: '', required: false, nested_fields: [] }])
         setHasDraft(true)
       }
-    } catch (e) {
-      console.error('Failed to load draft:', e)
+    } catch {
+      // Ignore malformed draft data in localStorage
     }
   }
 

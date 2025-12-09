@@ -68,8 +68,7 @@ def _make_llm_decision(snippet: str, expected_type: Optional[str] = None) -> Dic
             return {"workflow": result.workflow, "document_type": expected_type}
         else:
             return {"workflow": result.workflow, "document_type": result.document_type}
-    except Exception as e:
-        print(f"Router failed, defaulting to 'balanced'/'generic'. Error: {e}")
+    except Exception:
         return {"workflow": "balanced", "document_type": "generic"}
 
 
@@ -85,11 +84,10 @@ def route_document(document: Document, schema_id: Optional[str] = None) -> Dict[
     if schema_id:
         document_type = get_schema_document_type(schema_id)
         if document_type:
-            print(f"[{source}] Using schema-defined document_type: {document_type}")
+            pass
 
     # 2. Heuristics: Check file extension if available
     if source.endswith(".txt") and not document_type:
-        print(f"[{source}] .txt extension -> basic workflow (Heuristic)")
         return {"workflow": "basic", "document_type": "generic"}
     
     # 3. Prepare content for analysis
@@ -103,7 +101,6 @@ def route_document(document: Document, schema_id: Optional[str] = None) -> Dict[
     )
     cached = get_cached_result(cache_key, cache_dir=ROUTER_CACHE_DIR)
     if cached:
-        print(f"[{source}] Using cached routing decision")
         return cached
     
     # 5. Short content optimization
@@ -178,6 +175,6 @@ def update_schema_document_type(schema_id: str, document_type: str) -> None:
             timeout=5
         )
         if not resp.ok:
-            print(f"Failed to update schema {schema_id}: {resp.status_code}")
-    except Exception as e:
-        print(f"Error updating schema: {str(e)}")
+            pass
+    except Exception:
+        pass

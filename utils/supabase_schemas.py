@@ -25,10 +25,6 @@ def get_schema_content(schema_id: str) -> Dict[str, Any]:
             return {"fields": []}
 
         content = data[0].get("content")
-        
-        # Debug: Log raw content from Supabase
-        print(f"[get_schema_content] Raw content type: {type(content)}")
-        print(f"[get_schema_content] Raw content preview: {str(content)[:300]}")
 
         # Supabase returns jsonb as objects, but if the column is text we may
         # receive a string. Normalize to dict to avoid empty-field extractions.
@@ -36,19 +32,12 @@ def get_schema_content(schema_id: str) -> Dict[str, Any]:
             try:
                 content = json.loads(content)
             except json.JSONDecodeError:
-                print("Error: Supabase schema content is not valid JSON string.")
                 return {"fields": []}
 
         if not isinstance(content, dict):
-            print("Error: Supabase schema content is not a JSON object.")
             return {"fields": []}
 
-        # Debug: Log parsed content structure
-        print(f"[get_schema_content] Parsed content keys: {content.keys()}")
-        print(f"[get_schema_content] Fields count: {len(content.get('fields', []))}")
-        
         return content
     
-    except Exception as e:
-        print(f"Error fetching schema: {str(e)}")
+    except Exception:
         return {"fields": []}  # Fallback empty schema

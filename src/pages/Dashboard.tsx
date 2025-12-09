@@ -6,7 +6,6 @@ import Dropzone from '../components/Dropzone'
 import CreateSchemaModal, { SchemaData } from '../components/CreateSchemaModal'
 import SuccessModal from '../components/SuccessModal'
 import { Loader2, Plus, Sparkles, FileText, AlertCircle, Copy, XCircle, Check, CheckCircle2, ChevronLeft, ChevronRight, Eye } from 'lucide-react'
-import { v4 as uuidv4 } from 'uuid'
 
 type FileStatus = 'pending' | 'processing' | 'completed' | 'error'
 
@@ -90,9 +89,6 @@ export default function Dashboard() {
       return
     }
 
-    console.log('Starting extraction for', files.length, 'files')
-    console.log('Selected schema ID:', selectedSchemaId)
-
     setStatus('processing')
     setErrorMsg(null)
     setProcessingProgress({ current: 0, total: files.length })
@@ -107,36 +103,11 @@ export default function Dashboard() {
     setFileStatuses(initialStatuses)
 
     try {
-      // Generate a batch ID for this extraction run
-      const batchId = uuidv4()
-      setCurrentBatchId(batchId)
-
-      // Get current user's tenant_id
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error('Not authenticated')
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('tenant_id')
-        .eq('id', user.id)
-        .single()
-
-      if (!profile) throw new Error('Profile not found')
-
-      // Get schema name if selected
-      let schemaName = null
-      if (selectedSchemaId) {
-        const { data: schema } = await supabase
-          .from('schemas')
-          .select('name')
-          .eq('id', selectedSchemaId)
-          .single()
-        schemaName = schema?.name
-      }
+      // Generate a batch ID for this upload session
+      const batchId = crypto.randomUUID()
 
       // Process all files in parallel for faster results
-      const uploadPromises = files.map(async (file, index) => {
-        console.log(`Starting upload for file ${index + 1}/${files.length}:`, file.name)
+      const uploadPromises = files.map(async (file) => {
 
         // Update status to processing
         setFileStatuses(prev => prev.map(fs =>
@@ -144,35 +115,16 @@ export default function Dashboard() {
         ))
 
         try {
-          const data = await uploadDocument(file, selectedSchemaId || undefined)
-          console.log(`Successfully processed ${file.name}:`, data)
+          const data = await uploadDocument(file, selectedSchemaId || undefined, batchId)
 
-          // Save metadata to database
-          const { data: savedResult } = await supabase.from('extraction_results').insert({
-            tenant_id: profile.tenant_id,
-            filename: file.name,
-            schema_id: selectedSchemaId || null,
-            schema_name: schemaName,
-            field_count: data.results ? Object.keys(data.results).length : 0,
-            processing_duration_ms: data.operational_metadata?.processing_duration_ms || null,
-            workflow: data.operational_metadata?.workflow || null,
-            status: 'completed',
-            batch_id: batchId
-          }).select().single()
-
-          // Store full results in localStorage with the result ID
-          if (savedResult) {
-            const storageKey = `extraction_result_${savedResult.id}`
-            const dataToStore = {
-              results: data.results,
-              operational_metadata: data.operational_metadata
-            }
-            console.log('Saving to localStorage:', storageKey, dataToStore)
-            localStorage.setItem(storageKey, JSON.stringify(dataToStore))
-            console.log('Saved successfully. Verifying:', localStorage.getItem(storageKey) !== null)
-          } else {
-            console.error('No savedResult returned from database insert')
+          // Store full results in localStorage for viewing
+          const resultId = crypto.randomUUID()
+          const storageKey = `extraction_result_${resultId}`
+          const dataToStore = {
+            results: data.results,
+            operational_metadata: data.operational_metadata
           }
+          localStorage.setItem(storageKey, JSON.stringify(dataToStore))
 
           // Update status to completed
           setFileStatuses(prev => prev.map(fs =>
@@ -180,36 +132,20 @@ export default function Dashboard() {
           ))
           setProcessingProgress(prev => ({ ...prev, current: prev.current + 1 }))
 
-          return { file: file.name, success: true, data, resultId: savedResult?.id }
+          return { file: file.name, success: true, data, resultId, batchId: data.batch_id }
         } catch (err: any) {
-          console.error(`Error processing ${file.name}:`, err)
-
-          // Save error metadata to database
-          await supabase.from('extraction_results').insert({
-            tenant_id: profile.tenant_id,
-            filename: file.name,
-            schema_id: selectedSchemaId || null,
-            schema_name: schemaName,
-            field_count: 0,
-            status: 'failed',
-            error_message: err.message,
-            batch_id: batchId
-          })
-
           // Update status to error
           setFileStatuses(prev => prev.map(fs =>
             fs.file.name === file.name ? { ...fs, status: 'error' as FileStatus, error: err.message } : fs
           ))
           setProcessingProgress(prev => ({ ...prev, current: prev.current + 1 }))
 
-          return { file: file.name, success: false, error: err.message || 'Processing failed' }
+          return { file: file.name, success: false, error: err.message || 'Processing failed', batchId }
         }
       })
 
       // Wait for all uploads to complete
-      console.log('Waiting for all uploads to complete...')
       const processedResults = await Promise.all(uploadPromises)
-      console.log('All uploads completed:', processedResults)
 
       const hasError = processedResults.some(r => !r.success)
 
@@ -225,14 +161,17 @@ export default function Dashboard() {
           status: 'completed' as const
         }))
 
+        // Get batchId from first successful result
+        const batchIdFromResults = processedResults.find(r => r.batchId)?.batchId || null
+
         setStatus('idle')
         setProcessedFilesCount(files.length)
         setProcessedFilesSummary(summary)
+        setCurrentBatchId(batchIdFromResults)
         setShowSuccessModal(true)
         handleReset()
       }
     } catch (err: any) {
-      console.error('Fatal error during extraction:', err)
       setStatus('idle')
       setErrorMsg(err.message || 'An unexpected error occurred')
     }

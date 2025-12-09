@@ -1,23 +1,78 @@
 from typing import Dict, Any, Optional
 import json
 import hashlib
+import os
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
-from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache
 
 class SystemPromptOutput(BaseModel):
     system_prompt: str = Field(..., description="The generated system prompt for the extraction task.")
 
+
+def _get_supabase_headers() -> Dict[str, str]:
+    """Get Supabase API headers."""
+    supabase_key = os.getenv("VITE_SUPABASE_ANON_KEY", "")
+    return {
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+
+
+def _get_cached_prompt_from_supabase(cache_key: str) -> Optional[str]:
+    """Fetch cached prompt from Supabase prompt_cache table."""
+    try:
+        import requests
+        supabase_url = os.getenv("VITE_SUPABASE_URL")
+        if not supabase_url:
+            return None
+        
+        url = f"{supabase_url.rstrip('/')}/rest/v1/prompt_cache"
+        params = {"cache_key": f"eq.{cache_key}", "select": "system_prompt"}
+        
+        resp = requests.get(url, headers=_get_supabase_headers(), params=params, timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        if data and len(data) > 0:
+            return data[0].get("system_prompt")
+        return None
+    except Exception:
+        return None
+
+
+def _save_prompt_to_supabase(cache_key: str, document_type: str, schema_hash: str, system_prompt: str) -> bool:
+    """Save generated prompt to Supabase prompt_cache table."""
+    try:
+        import requests
+        supabase_url = os.getenv("VITE_SUPABASE_URL")
+        if not supabase_url:
+            return False
+        
+        url = f"{supabase_url.rstrip('/')}/rest/v1/prompt_cache"
+        payload = {
+            "cache_key": cache_key,
+            "document_type": document_type,
+            "schema_hash": schema_hash,
+            "system_prompt": system_prompt,
+        }
+        
+        resp = requests.post(url, headers=_get_supabase_headers(), json=payload, timeout=5)
+        resp.raise_for_status()
+        return True
+    except Exception:
+        return False
+
 def generate_system_prompt(
     document_type: str, 
     schema: Dict[str, Any],
-    # structure_hints removed to allow caching
 ) -> str:
     """
     Generates a specialized system prompt for extracting data from a specific document type
     according to a given schema.
     
-    Now cached using cache_manager to avoid expensive re-generation.
+    Cached in Supabase prompt_cache table for persistence across deployments.
     """
     
     # Compute a stable hash of the schema based on canonical JSON
@@ -26,23 +81,15 @@ def generate_system_prompt(
     schema_canonical = json.dumps(schema, sort_keys=True, separators=(",", ":"))
     schema_hash = hashlib.sha256(schema_canonical.encode("utf-8")).hexdigest()
 
-    # Check Cache
-    cache_key = generate_cache_key(
-        content=None,
-        extra_params={
-            "step": "generate_system_prompt",
-            "document_type": document_type,
-            "schema_hash": schema_hash,
-        },
-    )
+    # Generate cache key from document_type and schema_hash
+    cache_key = hashlib.sha256(f"{document_type}:{schema_hash}".encode("utf-8")).hexdigest()
     
-    cached = get_cached_result(cache_key)
-    if cached and "system_prompt" in cached:
-        print(f"[Prompt Generator] Using cached system prompt for '{document_type}'")
-        return cached["system_prompt"]
+    # Check Supabase cache first (persistent across deployments)
+    cached_prompt = _get_cached_prompt_from_supabase(cache_key)
+    if cached_prompt:
+        print(f"[Prompt Generator] Using cached prompt from Supabase for '{document_type}'")
+        return cached_prompt
     
-    print(f"[Prompt Generator] Generatng NEW system prompt for '{document_type}'...")
-
     # Convert schema to a string representation for the prompt
     schema_str = json.dumps(schema, indent=2)
     
@@ -75,6 +122,7 @@ def generate_system_prompt(
     )
 
     try:
+        print(f"[Prompt Generator] Generating new prompt for '{document_type}' (not in cache)")
         result = llm.invoke(
             [
                 {"role": "system", "content": meta_system_prompt},
@@ -83,8 +131,12 @@ def generate_system_prompt(
             config={"run_name": "prompt_generator"},
         )
         
-        # Save to cache
-        save_to_cache(cache_key, {"system_prompt": result.system_prompt})
+        # Save to Supabase cache for persistence
+        saved = _save_prompt_to_supabase(cache_key, document_type, schema_hash, result.system_prompt)
+        if saved:
+            print(f"[Prompt Generator] Saved prompt to Supabase cache for '{document_type}'")
+        else:
+            print(f"[Prompt Generator] Warning: Failed to save prompt to Supabase cache")
         
         return result.system_prompt
     except Exception as e:

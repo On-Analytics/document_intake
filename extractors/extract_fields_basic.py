@@ -5,7 +5,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, create_model, Field
 
 from core_pipeline import BASE_DIR, DocumentMetadata, _normalize_garbage_characters
-from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache
+from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache, EXTRACTION_CACHE_DIR
 from utils.prompt_generator import generate_system_prompt
 
 def _get_python_type(type_str: str) -> Type:
@@ -64,9 +64,8 @@ def extract_fields_basic(
         }
     )
     
-    cached = get_cached_result(cache_key)
+    cached = get_cached_result(cache_key, cache_dir=EXTRACTION_CACHE_DIR)
     if cached:
-        print(f"[{metadata.filename}] Using cached extraction result.")
         return cached
 
     # Generate the Pydantic model dynamically based on the loaded schema
@@ -83,7 +82,6 @@ def extract_fields_basic(
     fields_block = "\n".join(field_lines)
 
     # Generate dynamic system prompt based on doc type and schema
-    print(f"[{metadata.filename}] Generating dynamic system prompt for type: '{document_type}'...")
     system_prompt = generate_system_prompt(document_type, schema)
 
     user_prompt = (
@@ -112,6 +110,6 @@ def extract_fields_basic(
     )
     
     result = model.model_dump()
-    save_to_cache(cache_key, result)
+    save_to_cache(cache_key, result, cache_dir=EXTRACTION_CACHE_DIR)
 
     return result

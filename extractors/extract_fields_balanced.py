@@ -51,7 +51,7 @@ def _load_schema(schema_path: Path) -> Dict[str, Any]:
         return json.load(f)
 
 
-from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache
+from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache, EXTRACTION_CACHE_DIR
 from utils.prompt_generator import generate_system_prompt
 
 def extract_fields_balanced(
@@ -72,11 +72,6 @@ def extract_fields_balanced(
     content_to_use = markdown_content if markdown_content else (document.page_content or "")
     schema = schema_content
     
-    # Debug: Log schema structure to identify issues
-    print(f"[{metadata.filename}] Schema content type: {type(schema)}")
-    print(f"[{metadata.filename}] Schema keys: {schema.keys() if isinstance(schema, dict) else 'N/A'}")
-    print(f"[{metadata.filename}] Fields count: {len(schema.get('fields', []))}")
-    
     cache_key = generate_cache_key(
         content=content_to_use,
         extra_params={
@@ -87,13 +82,12 @@ def extract_fields_balanced(
         }
     )
     
-    cached = get_cached_result(cache_key)
+    cached = get_cached_result(cache_key, cache_dir=EXTRACTION_CACHE_DIR)
     if cached:
         # Check if cached result is empty (might be from a previous failed run)
         if not any(v is not None for v in cached.values()):
-            print(f"[{metadata.filename}] Cached result is empty, ignoring cache and re-extracting.")
+            pass
         else:
-            print(f"[{metadata.filename}] Using cached extraction result (Balanced).")
             return cached
 
     # Generate the Pydantic model dynamically based on the loaded schema
@@ -101,15 +95,9 @@ def extract_fields_balanced(
     
     # Early return if schema has no fields - this would produce empty results
     if not fields:
-        print(f"[{metadata.filename}] WARNING: Schema has no fields! Schema content: {json.dumps(schema)[:500]}")
         return {}
     
     DynamicModel = _create_dynamic_model(schema)
-
-    if markdown_content:
-        print(f"[{metadata.filename}] Extracting from Markdown content (Length: {len(content_to_use)})")
-    else:
-        print(f"[{metadata.filename}] Extracting from Raw Text content (Length: {len(content_to_use)})")
 
     field_lines = []
     for field in fields:
@@ -121,7 +109,6 @@ def extract_fields_balanced(
     fields_block = "\n".join(field_lines)
 
     # Generate dynamic system prompt based on doc type and schema (NO HINTS here now)
-    print(f"[{metadata.filename}] Generating dynamic system prompt for type: '{document_type}'...")
     system_prompt = generate_system_prompt(document_type, schema)
     
     # Inject Structure Hints into User Prompt
@@ -176,8 +163,6 @@ def extract_fields_balanced(
     
     # Only cache non-empty results to avoid persisting failures
     if result and any(v is not None for v in result.values()):
-        save_to_cache(cache_key, result)
-    else:
-        print(f"[{metadata.filename}] WARNING: Extraction returned empty result, not caching.")
+        save_to_cache(cache_key, result, cache_dir=EXTRACTION_CACHE_DIR)
 
     return result

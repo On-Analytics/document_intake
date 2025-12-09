@@ -1,14 +1,17 @@
 import shutil
 import tempfile
 import os
+import time
+import uuid
 from pathlib import Path
 from typing import Dict, Any
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 import json
+import requests
 
 from router import route_document
 from templates_registry import TEMPLATES, TemplateConfig
@@ -36,6 +39,98 @@ class ProcessResponse(BaseModel):
     document_id: str
     results: Dict[str, Any]
     operational_metadata: Dict[str, Any]
+    batch_id: Optional[str] = None  # For grouping results in frontend
+
+def _get_tenant_id_from_token(auth_header: Optional[str]) -> Optional[str]:
+    """Extract tenant_id from JWT token via Supabase."""
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return None
+    
+    try:
+        token = auth_header.split(" ")[1]
+        supabase_url = os.getenv("VITE_SUPABASE_URL")
+        supabase_key = os.getenv("VITE_SUPABASE_ANON_KEY")
+        
+        if not supabase_url or not supabase_key:
+            return None
+        
+        # Get user from token
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {token}",
+        }
+        resp = requests.get(f"{supabase_url}/auth/v1/user", headers=headers, timeout=5)
+        if resp.status_code != 200:
+            return None
+        
+        user_id = resp.json().get("id")
+        if not user_id:
+            return None
+        
+        # Get tenant_id from profiles
+        profile_resp = requests.get(
+            f"{supabase_url}/rest/v1/profiles",
+            headers={**headers, "Content-Type": "application/json"},
+            params={"id": f"eq.{user_id}", "select": "tenant_id"},
+            timeout=5
+        )
+        if profile_resp.status_code == 200 and profile_resp.json():
+            return profile_resp.json()[0].get("tenant_id")
+        return None
+    except Exception:
+        return None
+
+
+def _log_extraction_result(
+    tenant_id: str,
+    filename: str,
+    schema_id: Optional[str],
+    schema_name: Optional[str],
+    field_count: int,
+    processing_duration_ms: int,
+    workflow: str,
+    status: str = "completed",
+    error_message: Optional[str] = None,
+    batch_id: Optional[str] = None,
+) -> bool:
+    """Log extraction result to Supabase extraction_results table."""
+    try:
+        supabase_url = os.getenv("VITE_SUPABASE_URL")
+        supabase_key = os.getenv("VITE_SUPABASE_ANON_KEY")
+        
+        if not supabase_url or not supabase_key:
+            return False
+        
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        }
+        
+        payload = {
+            "tenant_id": tenant_id,
+            "filename": filename,
+            "schema_id": schema_id if schema_id and schema_id not in ["inline-schema", "auto-schema"] else None,
+            "schema_name": schema_name,
+            "field_count": field_count,
+            "processing_duration_ms": processing_duration_ms,
+            "workflow": workflow,
+            "status": status,
+            "error_message": error_message,
+            "batch_id": batch_id,
+        }
+        
+        resp = requests.post(
+            f"{supabase_url}/rest/v1/extraction_results",
+            headers=headers,
+            json=payload,
+            timeout=5
+        )
+        return resp.status_code in [200, 201]
+    except Exception:
+        return False
+
 
 @app.get("/")
 async def root():
@@ -47,12 +142,20 @@ async def process_document(
     schema_id: Optional[str] = Form(None),
     schema_content_from_request: Optional[str] = Form(None),
     document_type: Optional[str] = Form(None),
+    batch_id: Optional[str] = Form(None),
+    authorization: Optional[str] = Header(None),
 ):
     """
     Upload a file, process it immediately, and return results.
     schema_content: Optional JSON string containing the full schema
+    batch_id: Optional batch ID for grouping multiple files processed together
     """
-    print(f"Processing {file.filename}")
+    start_time = time.time()
+    tenant_id = _get_tenant_id_from_token(authorization)
+    
+    # Generate batch_id if not provided
+    if not batch_id:
+        batch_id = str(uuid.uuid4())
 
     # 1. Save to Temp File (Required for PDF loaders usually)
     suffix = Path(file.filename).suffix
@@ -95,10 +198,7 @@ async def process_document(
             doc_type = route.get("document_type", "generic")
             workflow_name = route.get("workflow", "basic")
 
-            print(f"Router decided: Type={doc_type}, Workflow={workflow_name}")
-
         elif is_image:
-            print(f"Image detected: {file.filename}. Skipping text extraction and forcing Balanced workflow.")
             # For images, we can't easily extract text for the router without OCR.
             # So we default to the 'balanced' workflow (which uses Vision) and 'generic' type.
             router_doc = Document(page_content="", metadata={"source": file.filename})
@@ -154,7 +254,6 @@ async def process_document(
 
         if workflow_name == "balanced":
         # Vision + Text Extraction
-            print(f"Running Balanced extraction (Vision + Text) for {file.filename}")
 
                 # Step 1: Generate Markdown via Vision
             vision_result = vision_generate_markdown(
@@ -176,7 +275,6 @@ async def process_document(
             )
         else:
             # Basic Text extraction
-            print(f"Running Basic extraction for {file.filename}")
             extraction_result = extract_fields_basic(
                 document=router_doc,
                 metadata=doc_metadata,
@@ -184,26 +282,23 @@ async def process_document(
                 document_type=doc_type
             )
 
-        # 6. Optional: Log this run for observability (does not affect behavior)
-        try:
-            # Use schema_id when provided; otherwise note whether schema was auto-selected or inline
-            effective_schema_id = schema_id
-            if not effective_schema_id:
-                if schema_content_from_request:
-                    effective_schema_id = "inline-schema"
-                else:
-                    effective_schema_id = "auto-schema"
-
-            log_run(
-                content=router_doc.page_content or "",
-                document_type=doc_type,
-                schema_id=effective_schema_id,
-                workflow=workflow_name,
+        # 6. Log extraction result to Supabase (backend logging)
+        processing_duration_ms = int((time.time() - start_time) * 1000)
+        field_count = len([v for v in extraction_result.values() if v is not None]) if extraction_result else 0
+        schema_name = schema_content.get("document_type") or schema_content.get("name") if schema_content else None
+        
+        if tenant_id:
+            _log_extraction_result(
+                tenant_id=tenant_id,
                 filename=file.filename,
+                schema_id=schema_id,
+                schema_name=schema_name,
+                field_count=field_count,
+                processing_duration_ms=processing_duration_ms,
+                workflow=workflow_name,
+                status="completed",
+                batch_id=batch_id,
             )
-        except Exception:
-            # Never let logging break the main flow
-            pass
 
         # 7. Build Response
         # For non-PDF types, we treat the document as a single logical page for now.
@@ -218,11 +313,26 @@ async def process_document(
             status="success",
             document_id="no-persistence",
             results=extraction_result,
-            operational_metadata=op_metadata
+            operational_metadata=op_metadata,
+            batch_id=batch_id
         )
 
     except Exception as e:
-        print(f"Processing Error: {e}")
+        # Log failed extraction
+        if tenant_id:
+            processing_duration_ms = int((time.time() - start_time) * 1000)
+            _log_extraction_result(
+                tenant_id=tenant_id,
+                filename=file.filename,
+                schema_id=schema_id,
+                schema_name=None,
+                field_count=0,
+                processing_duration_ms=processing_duration_ms,
+                workflow=workflow_name if 'workflow_name' in dir() else "unknown",
+                status="failed",
+                error_message=str(e)[:500],  # Truncate long errors
+                batch_id=batch_id,
+            )
         raise HTTPException(status_code=500, detail=str(e))
 
     finally:

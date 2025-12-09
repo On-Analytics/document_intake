@@ -2,20 +2,19 @@ import { supabase } from './supabase'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
-export async function uploadDocument(file: File, schemaId?: string) {
-  console.log('uploadDocument called for:', file.name, 'with schema:', schemaId)
-  console.log('API_URL:', API_URL)
-
+export async function uploadDocument(file: File, schemaId?: string, batchId?: string) {
   const { data: { session } } = await supabase.auth.getSession()
 
   if (!session) {
-    console.error('No session found')
     throw new Error('Not authenticated')
   }
-
-  console.log('Session found, creating FormData...')
   const formData = new FormData()
   formData.append('file', file)
+
+  // Add batch_id for grouping multiple files
+  if (batchId) {
+    formData.append('batch_id', batchId)
+  }
 
   // If schema ID is provided, fetch the schema content and send it
   if (schemaId) {
@@ -28,23 +27,18 @@ export async function uploadDocument(file: File, schemaId?: string) {
       .single()
 
     if (error) {
-      console.error('Error fetching schema:', error)
       throw new Error('Failed to fetch schema')
     }
 
     if (schema && schema.content) {
-      console.log('Adding schema content to request')
       formData.append('schema_content', JSON.stringify(schema.content))
     }
 
     if (schema && schema.document_type) {
-      console.log('Adding document_type to request:', schema.document_type)
       formData.append('document_type', schema.document_type)
     }
   }
 
-  console.log('Sending request to:', `${API_URL}/process`)
-  
   try {
     const response = await fetch(`${API_URL}/process`, {
       method: 'POST',
@@ -54,11 +48,8 @@ export async function uploadDocument(file: File, schemaId?: string) {
       body: formData
     })
 
-    console.log('Response status:', response.status)
-
     if (!response.ok) {
       const errorText = await response.text()
-      console.error('Error response:', errorText)
       try {
         const error = JSON.parse(errorText)
         throw new Error(error.detail || 'Upload failed')
@@ -68,10 +59,8 @@ export async function uploadDocument(file: File, schemaId?: string) {
     }
 
     const result = await response.json()
-    console.log('Upload successful:', result)
     return result
   } catch (error) {
-    console.error('Fetch error:', error)
     throw error
   }
 }
