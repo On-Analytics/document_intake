@@ -1,6 +1,4 @@
-from pathlib import Path
 from typing import Dict, Any, List, Optional, Type
-
 import json
 from langchain_core.documents import Document
 from langchain_openai import ChatOpenAI
@@ -8,6 +6,7 @@ from pydantic import BaseModel, create_model, Field
 
 from core_pipeline import BASE_DIR, DocumentMetadata, _normalize_garbage_characters
 from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache
+from utils.prompt_generator import generate_system_prompt
 
 def _get_python_type(type_str: str) -> Type:
     """Map schema type strings to Python types."""
@@ -22,7 +21,6 @@ def _get_python_type(type_str: str) -> Type:
     }
     return type_map.get(type_str.lower(), str)
 
-
 def _create_dynamic_model(schema: Dict[str, Any]) -> Type[BaseModel]:
     """Create a Pydantic model dynamically from the JSON schema."""
     fields = {}
@@ -35,7 +33,6 @@ def _create_dynamic_model(schema: Dict[str, Any]) -> Type[BaseModel]:
         
         python_type = _get_python_type(field_type_str)
         
-        # Use Optional for all fields to allow partial extraction unless strictly required
         if not is_required:
             fields[field_name] = (Optional[python_type], Field(default=None, description=description))
         else:
@@ -43,13 +40,10 @@ def _create_dynamic_model(schema: Dict[str, Any]) -> Type[BaseModel]:
 
     return create_model("DynamicExtractionBasic", **fields)
 
-
-from utils.prompt_generator import generate_system_prompt
-
 def extract_fields_basic(
     document: Document,
     metadata: DocumentMetadata,
-    schema_content: Dict[str, Any],
+    schema_content: Dict[str, Any],  # Changed from schema_path
     document_type: str = "generic",
 ) -> Dict[str, Any]:
     """Extract structured data using the provided schema and an LLM (Basic/Text Mode).
@@ -61,7 +55,6 @@ def extract_fields_basic(
     schema = schema_content
     
     # Check Cache
-    # Hash the content + schema structure to be safe
     cache_key = generate_cache_key(
         content=content,
         extra_params={
@@ -91,14 +84,8 @@ def extract_fields_basic(
 
     # Generate dynamic system prompt based on doc type and schema
     print(f"[{metadata.filename}] Generating dynamic system prompt for type: '{document_type}'...")
-    # NOTE: structure_hints removed from here to allow caching
     system_prompt = generate_system_prompt(document_type, schema)
 
-    # Injecting structure hints into the User Prompt instead of System Prompt
-    hint_text = ""
-    # Check if structure_hints was passed via kwargs or we could add it to signature
-    # (For now, basic workflow usually has no hints, but we support consistency)
-    
     user_prompt = (
         "Extract the following fields from the document. If a field is not present, "
         "set it to null or an empty list as appropriate. Do not invent data.\n\n"

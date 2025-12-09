@@ -180,7 +180,7 @@ async def process_document(
             extraction_result = extract_fields_basic(
                 document=router_doc,
                 metadata=doc_metadata,
-                schema_path=schema_path,
+                schema_content=schema_content,
                 document_type=doc_type
             )
 
