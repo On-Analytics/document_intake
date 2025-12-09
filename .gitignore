@@ -32,3 +32,6 @@ test_doc.txt
 # Node / Frontend
 node_modules/
 dist/
+
+# LLM prompt cache
+.cache/
