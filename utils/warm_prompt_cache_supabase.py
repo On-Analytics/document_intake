@@ -1,6 +1,8 @@
+from typing import Any, Dict, List
 import json
 import os
-from typing import Any, Dict, List
+from pathlib import Path
+from utils.cache_manager import generate_cache_key
 
 try:
     from dotenv import load_dotenv
@@ -13,6 +15,7 @@ except ImportError:  # pragma: no cover - optional dependency
     requests = None  # type: ignore[assignment]
 
 from utils.prompt_generator import generate_system_prompt
+from utils.cache_manager import generate_cache_key
 
 # Load environment variables from a local .env file if python-dotenv is
 # available. This makes it easy to reuse the same Vite/Supabase vars in
@@ -69,13 +72,7 @@ def _fetch_schemas() -> List[Dict[str, Any]]:
 
 
 def warm_prompt_cache_from_supabase() -> None:
-    """Pre-generate and cache system prompts for schemas stored in Supabase.
-
-    For each row in `public.schemas` that has a non-null document_type and
-    valid JSON `content`, this will call generate_system_prompt(document_type,
-    content). The prompt generator will then either hit `.cache` or call the
-    LLM once and store the result there.
-    """
+    """Pre-generate and cache system prompts using consistent cache keys."""
     schemas = _fetch_schemas()
     if not schemas:
         print("[WARM-SUPABASE] No schemas fetched; nothing to warm.")
@@ -87,17 +84,22 @@ def warm_prompt_cache_from_supabase() -> None:
         document_type = row.get("document_type")
         content = row.get("content")
 
-        if not document_type:
-            print(f"[WARM-SUPABASE] Skipping schema {schema_id} ('{name}') without document_type.")
+        if not document_type or not isinstance(content, dict):
             continue
 
-        if not isinstance(content, dict):
-            print(f"[WARM-SUPABASE] Skipping schema {schema_id} ('{name}') with non-object content.")
-            continue
-
+        # Generate cache key using the standard method
+        cache_key = generate_cache_key(
+            content=None,
+            extra_params={
+                "step": "generate_system_prompt",
+                "document_type": document_type,
+                "schema": content
+            }
+        )
+        
         print(f"[WARM-SUPABASE] Warming prompt for schema {schema_id} ('{name}') type='{document_type}'...")
         system_prompt = generate_system_prompt(document_type, content)
-        print(f"[WARM-SUPABASE] Cached system prompt for '{document_type}' (len={len(system_prompt)})")
+        print(f"[WARM-SUPABASE] Cached system prompt for '{document_type}' (key={cache_key[:8]}...)")
 
 
 if __name__ == "__main__":
