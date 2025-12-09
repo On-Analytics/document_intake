@@ -41,3 +41,6 @@ dist/
 
 # Templates (managed in Supabase schemas table)
 templates/
+
+# Supabase (managed directly in Supabase dashboard)
+supabase/
