@@ -43,29 +43,22 @@ def _create_dynamic_model(schema: Dict[str, Any]) -> Type[BaseModel]:
 
     return create_model("DynamicExtractionBasic", **fields)
 
-def _load_schema(schema_path: Path) -> Dict[str, Any]:
-    if not schema_path.exists():
-        return {"fields": []}
-
-    with schema_path.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
 
 from utils.prompt_generator import generate_system_prompt
 
 def extract_fields_basic(
     document: Document,
     metadata: DocumentMetadata,
-    schema_path: Path,
+    schema_content: Dict[str, Any],
     document_type: str = "generic",
 ) -> Dict[str, Any]:
     """Extract structured data using the provided schema and an LLM (Basic/Text Mode).
     
-    Returns a dict where keys match the Pydantic model and schema field names.
+    Args:
+        schema_content: Direct schema definition from Supabase/templates
     """
-
     content = _normalize_garbage_characters(document.page_content or "")
-    schema = _load_schema(schema_path)
+    schema = schema_content
     
     # Check Cache
     # Hash the content + schema structure to be safe

@@ -57,7 +57,7 @@ from utils.prompt_generator import generate_system_prompt
 def extract_fields_balanced(
     document: Document,
     metadata: DocumentMetadata,
-    schema_path: Path,
+    schema_content: Dict[str, Any],
     markdown_content: Optional[str] = None,
     document_type: str = "generic",
     structure_hints: Optional[Dict[str, Any]] = None,
@@ -70,7 +70,7 @@ def extract_fields_balanced(
     # Check Cache
     # We cache based on content (raw or markdown), schema, and hints.
     content_to_use = markdown_content if markdown_content else (document.page_content or "")
-    schema = _load_schema(schema_path)
+    schema = schema_content
     
     cache_key = generate_cache_key(
         content=content_to_use,

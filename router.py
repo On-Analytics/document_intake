@@ -19,7 +19,7 @@ class RouterOutput(BaseModel):
     )
 
 
-def _make_llm_decision(snippet: str) -> Dict[str, str]:
+def _make_llm_decision(snippet: str, expected_type: Optional[str] = None) -> Dict[str, str]:
     """Perform the actual LLM call for routing."""
     system_prompt = (
         "You are a document routing assistant. Your job is to analyze a document snippet and decide:\n"
@@ -59,50 +59,116 @@ def _make_llm_decision(snippet: str) -> Dict[str, str]:
             ],
             config={"run_name": "router"},
         )
-        return {"workflow": result.workflow, "document_type": result.document_type}
+        if expected_type:
+            return {"workflow": result.workflow, "document_type": expected_type}
+        else:
+            return {"workflow": result.workflow, "document_type": result.document_type}
     except Exception as e:
         print(f"Router failed, defaulting to 'balanced'/'generic'. Error: {e}")
         return {"workflow": "balanced", "document_type": "generic"}
 
 
-def route_document(document: Document) -> Dict[str, str]:
+def route_document(document: Document, schema_id: Optional[str] = None) -> Dict[str, str]:
     """
-    Determines which workflow to use and classifies the document type.
-    Uses persistent caching to minimize LLM calls.
-    
-    Returns:
-        {"workflow": "basic"|"balanced", "document_type": str}
+    Determines workflow and document type, prioritizing schema-provided types when available.
+    Updates schema with document_type if not already set.
     """
-    
-    # 1. Heuristics: Check file extension if available
     source = document.metadata.get("source", "").lower()
-    if source.endswith(".txt"):
-        print(f"[{source}] Smart Route: .txt extension -> basic/generic (Heuristic)")
+    
+    # 1. Check for schema-provided document_type
+    document_type = None
+    if schema_id:
+        document_type = get_schema_document_type(schema_id)
+        if document_type:
+            print(f"[{source}] Using schema-defined document_type: {document_type}")
+
+    # 2. Heuristics: Check file extension if available
+    if source.endswith(".txt") and not document_type:
+        print(f"[{source}] .txt extension -> basic workflow (Heuristic)")
         return {"workflow": "basic", "document_type": "generic"}
     
-    # 2. Prepare content for analysis
+    # 3. Prepare content for analysis
     content = _normalize_garbage_characters(document.page_content or "")
     snippet = content[:4000]
     
-    # 3. Check Persistence Cache
+    # 4. Check Persistence Cache
     cache_key = generate_cache_key(
         content=snippet,
-        extra_params={"step": "router_decision"}
+        extra_params={"step": "router_decision", "schema_id": schema_id}
     )
-    
     cached = get_cached_result(cache_key)
     if cached:
-        print(f"[{source}] Using cached routing decision: {cached['workflow']} / {cached['document_type']}")
+        print(f"[{source}] Using cached routing decision")
         return cached
     
-    # Optimization: If snippet is very short, default to basic
+    # 5. Short content optimization
     if len(snippet.strip()) < 50:
-         return {"workflow": "basic", "document_type": "generic"}
+        return {"workflow": "basic", "document_type": "generic"}
 
-    # 4. Make LLM Decision
+    # 6. Make LLM Decision (always determines workflow, only determines type if needed)
     decision = _make_llm_decision(snippet)
     
-    # Save to cache
-    save_to_cache(cache_key, decision)
+    # Use schema document_type if available, otherwise use LLM-determined type
+    final_doc_type = document_type if document_type else decision["document_type"]
     
-    return decision
+    # 7. Update schema if new document_type was determined
+    if schema_id and not document_type and decision["document_type"] != "generic":
+        update_schema_document_type(schema_id, decision["document_type"])
+    
+    # 8. Save to cache
+    save_to_cache(cache_key, {"workflow": decision["workflow"], "document_type": final_doc_type})
+    
+    return {"workflow": decision["workflow"], "document_type": final_doc_type}
+
+def get_schema_document_type(schema_id: str) -> Optional[str]:
+    """Fetch document_type from Supabase schemas table."""
+    try:
+        supabase_url = os.getenv("VITE_SUPABASE_URL")
+        supabase_key = os.getenv("VITE_SUPABASE_ANON_KEY")
+        
+        if not supabase_url or not supabase_key:
+            return None
+            
+        import requests
+        url = f"{supabase_url.rstrip('/')}/rest/v1/schemas?id=eq.{schema_id}"
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}",
+        }
+        
+        resp = requests.get(url, headers=headers, params={"select": "document_type"}, timeout=5)
+        if resp.ok:
+            data = resp.json()
+            return data[0]["document_type"] if data else None
+    except Exception:
+        pass
+    return None
+
+
+def update_schema_document_type(schema_id: str, document_type: str) -> None:
+    """Update document_type in Supabase schemas table."""
+    try:
+        supabase_url = os.getenv("VITE_SUPABASE_URL")
+        supabase_key = os.getenv("VITE_SUPABASE_ANON_KEY")
+        
+        if not supabase_url or not supabase_key:
+            return
+            
+        import requests
+        url = f"{supabase_url.rstrip('/')}/rest/v1/schemas?id=eq.{schema_id}"
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}",
+            "Content-Type": "application/json",
+        }
+        
+        resp = requests.patch(
+            url,
+            headers=headers,
+            data=json.dumps({"document_type": document_type}),
+            timeout=5
+        )
+        if not resp.ok:
+            print(f"Failed to update schema {schema_id}: {resp.status_code}")
+    except Exception as e:
+        print(f"Error updating schema: {str(e)}")

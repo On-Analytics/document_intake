@@ -74,16 +74,15 @@ def _analyze_markdown_structure(markdown: str) -> Dict[str, Any]:
 def vision_generate_markdown(
     document: Document,
     metadata: DocumentMetadata,
-    schema_path: Optional[Path] = None,
+    schema_content: Dict[str, Any],  # Changed parameter
 ) -> Dict[str, Any]:
-    """Generate a human-readable markdown representation of the document using GPT-4o Vision.
-
-    Ideal for PDFs with complex layouts (columns, sidebars) that text extraction misses.
-    Falls back to text-only mode if image conversion is not possible.
-    """
+    """Generate markdown representation using GPT-4o Vision.
     
+    Args:
+        schema_content: Direct schema definition from Supabase/templates
+    """
+    # Rest of function remains exactly the same
     # Check cache first
-    # Key includes filename and file stats (via file_path) to detect changes
     cache_key = generate_cache_key(
         file_path=str(metadata.file_path),
         extra_params={"step": "vision_generate_markdown", "model": os.getenv("VISION_MODEL", "gpt-4o-mini")}
@@ -182,4 +181,3 @@ def vision_generate_markdown(
     save_to_cache(cache_key, result)
 
     return result
-

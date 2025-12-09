@@ -16,6 +16,7 @@ from template_metadata import get_template_metadata, upsert_template_metadata
 from supabase_sync import update_schema_document_type
 from langchain_community.document_loaders import PDFPlumberLoader, TextLoader, Docx2txtLoader
 from langchain_core.documents import Document
+from utils.supabase_schemas import get_schema_content
 
 # Initialize FastAPI app
 app = FastAPI(title="Document Processor API", version="1.0.0")
@@ -44,7 +45,7 @@ async def root():
 async def process_document(
     file: UploadFile = File(...),
     schema_id: Optional[str] = Form(None),
-    schema_content: Optional[str] = Form(None),
+    schema_content_from_request: Optional[str] = Form(None),
     document_type: Optional[str] = Form(None),
 ):
     """
@@ -114,89 +115,23 @@ async def process_document(
         if document_type:
             doc_type = document_type
 
-        # 4. Select Schema
-        # Load schema from templates directory
-        templates_dir = Path(__file__).parent / "templates"
-
-        schema_dict = None
-        template_cfg: TemplateConfig | None = None  # type: ignore[valid-type]
-
+        # 4. Load Schema Content
+        # Replace schema loading logic:
         if schema_id:
-            # Look up built-in template configuration when a schema_id is provided.
-            template_cfg = TEMPLATES.get(schema_id)  # type: ignore[assignment]
-
-        if schema_content:
-            # Use schema content provided from frontend
-            print(f"Using custom schema content provided from frontend")
-            try:
-                schema_dict = json.loads(schema_content)
-            except json.JSONDecodeError as e:
-                raise HTTPException(status_code=400, detail=f"Invalid schema JSON: {str(e)}")
-
-            if schema_id:
-                # Template coming from Supabase (schema_content provided).
-                # Supabase schemas.document_type is the source of truth when present
-                # (passed in via the document_type form field). Only fall back to
-                # template_metadata.json when document_type was not provided.
-                meta = get_template_metadata(schema_id)
-
-                if not document_type and meta and isinstance(meta, dict) and "document_type" in meta:
-                    # No explicit document_type from DB; reuse previously stored value.
-                    doc_type = str(meta["document_type"])
-
-                # Ensure local metadata stays in sync with the final doc_type.
-                if not meta or not isinstance(meta, dict) or meta.get("document_type") != doc_type:
-                    upsert_template_metadata(template_id=schema_id, document_type=doc_type)
-
-                # Best-effort sync into Supabase schemas.document_type so that
-                # future runs can rely solely on the schemas table.
-                update_schema_document_type(schema_id, doc_type)
-
-        elif schema_id:
-            if template_cfg is not None:
-                # Built-in template: load schema from templates directory
-                schema_file = templates_dir / template_cfg.schema_filename
-                if not schema_file.exists():
-                    raise HTTPException(status_code=404, detail="Schema not found for template")
-
-                with schema_file.open("r") as f:
-                    schema_dict = json.load(f)
-
-                # Override router-detected document type with template's document_type
-                doc_type = template_cfg.document_type
-            else:
-                # User / cloned template stored on disk: look for stored metadata first
-                meta = get_template_metadata(schema_id)
-
-                if meta and isinstance(meta, dict) and "document_type" in meta:
-                    # Use previously learned/stored document_type
-                    doc_type = str(meta["document_type"])
-                else:
-                    # First time this template is used: keep router's document_type
-                    # and persist it so future runs don't need to infer doc_type again
-                    upsert_template_metadata(template_id=schema_id, document_type=doc_type)
-
-                # Best-effort sync into Supabase schemas.document_type
-                update_schema_document_type(schema_id, doc_type)
-
-                # Load schema file by ID (user/cloned template stored on disk)
-                schema_file = templates_dir / f"{schema_id}.json"
-                if not schema_file.exists():
-                    raise HTTPException(status_code=404, detail="Schema not found")
-
-                with schema_file.open("r") as f:
-                    schema_dict = json.load(f)
+            schema_content = get_schema_content(schema_id)
+            if not schema_content and schema_content_from_request:
+                try:
+                    schema_content = json.loads(schema_content_from_request)
+                except json.JSONDecodeError as e:
+                    raise HTTPException(status_code=400, detail=f"Invalid schema JSON: {str(e)}")
         else:
-            # Auto-schema mode is disabled: user must always select a template/schema
-            raise HTTPException(
-                status_code=400,
-                detail="No schema/template provided. Please select a template or send schema_content.",
-            )
+            with open(schema_path, 'r', encoding='utf-8') as f:
+                schema_content = json.load(f)
 
         # Write Schema to Temp File
         # Extractors expect a file path, so we dump the JSON content to a temp file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".json", mode="w", encoding="utf-8") as tmp_schema:
-            json.dump(schema_dict, tmp_schema)
+            json.dump(schema_content, tmp_schema)
             temp_schema_path = tmp_schema.name
             schema_path = Path(temp_schema_path)
 
@@ -218,14 +153,14 @@ async def process_document(
         extraction_result = {}
 
         if workflow_name == "balanced":
-            # Vision + Text Extraction
+        # Vision + Text Extraction
             print(f"Running Balanced extraction (Vision + Text) for {file.filename}")
 
-            # Step 1: Generate Markdown via Vision
+                # Step 1: Generate Markdown via Vision
             vision_result = vision_generate_markdown(
                 document=router_doc,
                 metadata=doc_metadata,
-                schema_path=schema_path
+                schema_content=schema_content
             )
             markdown_content = vision_result.get("markdown_content")
             structure_hints = vision_result.get("structure_hints")
@@ -234,7 +169,7 @@ async def process_document(
             extraction_result = extract_fields_balanced(
                 document=router_doc,
                 metadata=doc_metadata,
-                schema_path=schema_path,
+                schema_content=schema_content,
                 document_type=doc_type,
                 markdown_content=markdown_content,
                 structure_hints=structure_hints
@@ -254,7 +189,7 @@ async def process_document(
             # Use schema_id when provided; otherwise note whether schema was auto-selected or inline
             effective_schema_id = schema_id
             if not effective_schema_id:
-                if schema_content:
+                if schema_content_from_request:
                     effective_schema_id = "inline-schema"
                 else:
                     effective_schema_id = "auto-schema"
