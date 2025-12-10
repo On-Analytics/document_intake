@@ -92,6 +92,7 @@ def _log_extraction_result(
     status: str = "completed",
     error_message: Optional[str] = None,
     batch_id: Optional[str] = None,
+    user_token: Optional[str] = None,
 ) -> bool:
     """Log extraction result to Supabase extraction_results table."""
     try:
@@ -101,9 +102,12 @@ def _log_extraction_result(
         if not supabase_url or not supabase_key:
             return False
         
+        # Use user's token for RLS, fallback to anon key
+        auth_token = user_token if user_token else supabase_key
+        
         headers = {
             "apikey": supabase_key,
-            "Authorization": f"Bearer {supabase_key}",
+            "Authorization": f"Bearer {auth_token}",
             "Content-Type": "application/json",
             "Prefer": "return=minimal",
         }
@@ -152,6 +156,9 @@ async def process_document(
     """
     start_time = time.time()
     tenant_id = _get_tenant_id_from_token(authorization)
+    
+    # Extract user token for RLS-compliant inserts
+    user_token = authorization.split(" ")[1] if authorization and authorization.startswith("Bearer ") else None
     
     # Generate batch_id if not provided
     if not batch_id:
@@ -298,6 +305,7 @@ async def process_document(
                 workflow=workflow_name,
                 status="completed",
                 batch_id=batch_id,
+                user_token=user_token,
             )
 
         # 7. Build Response
@@ -332,6 +340,7 @@ async def process_document(
                 status="failed",
                 error_message=str(e)[:500],  # Truncate long errors
                 batch_id=batch_id,
+                user_token=user_token,
             )
         raise HTTPException(status_code=500, detail=str(e))
 
