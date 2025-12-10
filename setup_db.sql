@@ -285,7 +285,7 @@ values
   }'::jsonb
 );
 
--- Create extraction_results table to store metadata only (not full results)
+-- Create extraction_results table to store metadata only (not full results for security)
 CREATE TABLE IF NOT EXISTS public.extraction_results (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   tenant_id UUID REFERENCES public.tenants ON DELETE CASCADE NOT NULL,

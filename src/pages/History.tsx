@@ -19,7 +19,7 @@ interface ExtractionResult {
 }
 
 interface StoredResult {
-  results: any
+  results: Record<string, any>
   operational_metadata: any
 }
 
@@ -76,7 +76,7 @@ export default function History() {
     setExpandedResults(newExpanded)
   }
 
-  // Load all results from localStorage when results are fetched
+  // Load results from localStorage when results are fetched
   useEffect(() => {
     if (results && results.length > 0) {
       const newLoadedResults = new Map<string, StoredResult>()
@@ -341,7 +341,7 @@ export default function History() {
                             Extracted Data
                           </h4>
                           <dl className="space-y-5">
-                            {loadedResults.get(result.id)?.results && typeof loadedResults.get(result.id)?.results === 'object' && Object.entries(loadedResults.get(result.id)!.results).map(([key, value]) => (
+                            {loadedResults.get(result.id)?.results && Object.entries(loadedResults.get(result.id)!.results).map(([key, value]) => (
                               <div key={key} className="pb-5 border-b border-gray-100 last:border-0">
                                 <dt className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
                                   {key.replace(/_/g, ' ')}

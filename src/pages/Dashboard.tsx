@@ -117,14 +117,12 @@ export default function Dashboard() {
         try {
           const data = await uploadDocument(file, selectedSchemaId || undefined, batchId)
 
-          // Store full results in localStorage for viewing
-          // Use batch_id + filename as key so History page can find it
+          // Store results in localStorage for History page
           const storageKey = `extraction_result_${batchId}_${file.name}`
-          const dataToStore = {
+          localStorage.setItem(storageKey, JSON.stringify({
             results: data.results,
             operational_metadata: data.operational_metadata
-          }
-          localStorage.setItem(storageKey, JSON.stringify(dataToStore))
+          }))
 
           // Update status to completed
           setFileStatuses(prev => prev.map(fs =>
