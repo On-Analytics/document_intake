@@ -118,8 +118,8 @@ export default function Dashboard() {
           const data = await uploadDocument(file, selectedSchemaId || undefined, batchId)
 
           // Store full results in localStorage for viewing
-          const resultId = crypto.randomUUID()
-          const storageKey = `extraction_result_${resultId}`
+          // Use batch_id + filename as key so History page can find it
+          const storageKey = `extraction_result_${batchId}_${file.name}`
           const dataToStore = {
             results: data.results,
             operational_metadata: data.operational_metadata
@@ -132,7 +132,7 @@ export default function Dashboard() {
           ))
           setProcessingProgress(prev => ({ ...prev, current: prev.current + 1 }))
 
-          return { file: file.name, success: true, data, resultId, batchId: data.batch_id }
+          return { file: file.name, success: true, data, batchId: data.batch_id }
         } catch (err: any) {
           // Update status to error
           setFileStatuses(prev => prev.map(fs =>

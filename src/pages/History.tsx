@@ -82,7 +82,8 @@ export default function History() {
       const newLoadedResults = new Map<string, StoredResult>()
 
       results.forEach(result => {
-        const storageKey = `extraction_result_${result.id}`
+        // Use batch_id + filename as key (matches Dashboard storage)
+        const storageKey = `extraction_result_${result.batch_id}_${result.filename}`
         const stored = localStorage.getItem(storageKey)
         if (stored) {
           try {
