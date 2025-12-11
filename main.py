@@ -3,20 +3,18 @@ import tempfile
 import os
 import time
 import uuid
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
 import json
 import requests
 
 from router import route_document
-from templates_registry import TEMPLATES, TemplateConfig
-from template_metadata import get_template_metadata, upsert_template_metadata
-from supabase_sync import update_schema_document_type
 from langchain_community.document_loaders import PDFPlumberLoader, TextLoader, Docx2txtLoader
 from langchain_core.documents import Document
 from utils.supabase_schemas import get_schema_content
@@ -223,24 +221,24 @@ async def process_document(
             doc_type = document_type
 
         # 4. Load Schema Content
-        # Replace schema loading logic:
+        schema_content = None
         if schema_id:
             schema_content = get_schema_content(schema_id)
-            if not schema_content and schema_content_from_request:
-                try:
-                    schema_content = json.loads(schema_content_from_request)
-                except json.JSONDecodeError as e:
-                    raise HTTPException(status_code=400, detail=f"Invalid schema JSON: {str(e)}")
-        else:
-            with open(schema_path, 'r', encoding='utf-8') as f:
-                schema_content = json.load(f)
+        
+        # Fallback to schema_content_from_request if not found in Supabase
+        if not schema_content and schema_content_from_request:
+            try:
+                schema_content = json.loads(schema_content_from_request)
+            except json.JSONDecodeError as e:
+                raise HTTPException(status_code=400, detail=f"Invalid schema JSON: {str(e)}")
+        
+        if not schema_content:
+            raise HTTPException(status_code=400, detail="No schema provided. Please select a template or provide schema content.")
 
-        # Write Schema to Temp File
-        # Extractors expect a file path, so we dump the JSON content to a temp file
+        # Write Schema to Temp File (for any extractors that might need file path)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".json", mode="w", encoding="utf-8") as tmp_schema:
             json.dump(schema_content, tmp_schema)
             temp_schema_path = tmp_schema.name
-            schema_path = Path(temp_schema_path)
 
         # 5. Run Extraction Workflow
         from core_pipeline import DocumentMetadata
@@ -260,25 +258,40 @@ async def process_document(
         extraction_result = {}
 
         if workflow_name == "balanced":
-        # Vision + Text Extraction
-
-                # Step 1: Generate Markdown via Vision
-            vision_result = vision_generate_markdown(
-                document=router_doc,
-                metadata=doc_metadata,
-                schema_content=schema_content
-            )
+            # Vision + Text Extraction with Parallel Prompt Generation
+            from utils.prompt_generator import generate_system_prompt
+            
+            # Run vision_generate_markdown and generate_system_prompt in parallel
+            # This reduces latency by ~1-3 seconds when prompt is not cached
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                vision_future = executor.submit(
+                    vision_generate_markdown,
+                    document=router_doc,
+                    metadata=doc_metadata,
+                    schema_content=schema_content
+                )
+                prompt_future = executor.submit(
+                    generate_system_prompt,
+                    document_type=doc_type,
+                    schema=schema_content
+                )
+                
+                # Wait for both to complete
+                vision_result = vision_future.result()
+                system_prompt = prompt_future.result()
+            
             markdown_content = vision_result.get("markdown_content")
             structure_hints = vision_result.get("structure_hints")
 
-            # Step 2: Extract Fields from Markdown
+            # Extract Fields from Markdown (prompt already generated)
             extraction_result = extract_fields_balanced(
                 document=router_doc,
                 metadata=doc_metadata,
                 schema_content=schema_content,
                 document_type=doc_type,
                 markdown_content=markdown_content,
-                structure_hints=structure_hints
+                structure_hints=structure_hints,
+                system_prompt=system_prompt
             )
         else:
             # Basic Text extraction

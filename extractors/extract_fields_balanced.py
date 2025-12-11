@@ -61,6 +61,7 @@ def extract_fields_balanced(
     markdown_content: Optional[str] = None,
     document_type: str = "generic",
     structure_hints: Optional[Dict[str, Any]] = None,
+    system_prompt: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Extract structured data using the provided schema and an LLM (Balanced Mode).
     
@@ -108,8 +109,9 @@ def extract_fields_balanced(
 
     fields_block = "\n".join(field_lines)
 
-    # Generate dynamic system prompt based on doc type and schema (NO HINTS here now)
-    system_prompt = generate_system_prompt(document_type, schema)
+    # Use provided system_prompt if available (for parallel execution), otherwise generate
+    if system_prompt is None:
+        system_prompt = generate_system_prompt(document_type, schema)
     
     # Inject Structure Hints into User Prompt
     structure_context = ""

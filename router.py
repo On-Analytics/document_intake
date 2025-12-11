@@ -20,7 +20,7 @@ class RouterOutput(BaseModel):
     )
     document_type: str = Field(
         ...,
-        description="The specific type of the document (e.g., 'resume', 'invoice', 'receipt', 'contract', 'form', 'article', 'generic')."
+        description="The specific type of the document (e.g., 'resume', 'invoice', 'receipt', 'contract', 'form', 'article', 'purchase_order', 'bank_statement', 'claim', 'generic')."
     )
 
 
@@ -29,7 +29,7 @@ def _make_llm_decision(snippet: str, expected_type: Optional[str] = None) -> Dic
     system_prompt = (
         "You are a document routing assistant. Your job is to analyze a document snippet and decide:\n"
         "1. The best workflow ('basic' or 'balanced').\n"
-        "2. The specific document type (e.g., 'insurance_claim', 'resume', 'invoice', 'contract', 'article').\n\n"
+        "2. The specific document type (e.g., 'insurance_claim', 'resume', 'invoice', 'contract', 'article', 'purchase_order', 'bank_statement', 'claim').\n\n"
         "Workflow Selection Criteria:\n\n"
         "Choose 'basic' for:\n"
         "- Plain text documents with simple paragraphs\n"
@@ -90,7 +90,7 @@ def route_document(document: Document, schema_id: Optional[str] = None) -> Dict[
     if source.endswith(".txt") and not document_type:
         return {"workflow": "basic", "document_type": "generic"}
     
-    # 3. Prepare content for analysis
+    # 3. Prepare content for analysis, useing utility function 
     content = _normalize_garbage_characters(document.page_content or "")
     snippet = content[:4000]
     

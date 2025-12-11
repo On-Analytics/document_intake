@@ -20,14 +20,8 @@ pip-delete-this-directory.txt
 *.swp
 
 # Project Specific (Local Data)
-documents/
-outputs/
-DocsForTest/
-test_doc.txt
-*.pdf
-*.docx
-*.txt
 !requirements.txt
+notes.txt
 
 # Node / Frontend
 node_modules/
