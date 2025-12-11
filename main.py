@@ -285,13 +285,11 @@ async def process_document(
 
             # Extract Fields from Markdown (prompt already generated)
             extraction_result = extract_fields_balanced(
-                document=router_doc,
-                metadata=doc_metadata,
                 schema_content=schema_content,
-                document_type=doc_type,
+                system_prompt=system_prompt,
                 markdown_content=markdown_content,
+                document_type=doc_type,
                 structure_hints=structure_hints,
-                system_prompt=system_prompt
             )
         else:
             # Basic Text extraction
@@ -322,6 +320,9 @@ async def process_document(
             )
 
         # 7. Build Response
+        # Add source filename to extraction results for traceability
+        extraction_result["source_file"] = file.filename
+
         # For non-PDF types, we treat the document as a single logical page for now.
         op_metadata = {
             "page_count": len(docs) if is_pdf else 1,

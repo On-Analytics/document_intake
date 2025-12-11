@@ -3,11 +3,10 @@ from typing import Dict, Any, List, Optional, Type
 
 import os
 import json
-from langchain_core.documents import Document
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, create_model, Field
 
-from core_pipeline import BASE_DIR, DocumentMetadata
+from core_pipeline import BASE_DIR
 
 def _get_python_type(type_str: str) -> Type:
     """Map schema type strings to Python types."""
@@ -52,29 +51,25 @@ def _load_schema(schema_path: Path) -> Dict[str, Any]:
 
 
 from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache, EXTRACTION_CACHE_DIR
-from utils.prompt_generator import generate_system_prompt
 
 def extract_fields_balanced(
-    document: Document,
-    metadata: DocumentMetadata,
     schema_content: Dict[str, Any],
-    markdown_content: Optional[str] = None,
+    system_prompt: str,
+    markdown_content: str,
     document_type: str = "generic",
     structure_hints: Optional[Dict[str, Any]] = None,
-    system_prompt: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Extract structured data using the provided schema and an LLM (Balanced Mode).
     
-    Uses markdown_content if available (from vision step), otherwise falls back to raw text.
+    Uses markdown_content from vision step for extraction.
     """
     
     # Check Cache
-    # We cache based on content (raw or markdown), schema, and hints.
-    content_to_use = markdown_content if markdown_content else (document.page_content or "")
+    # We cache based on markdown content, schema, and hints.
     schema = schema_content
     
     cache_key = generate_cache_key(
-        content=content_to_use,
+        content=markdown_content,
         extra_params={
             "step": "extract_fields_balanced",
             "schema": schema,
@@ -100,50 +95,33 @@ def extract_fields_balanced(
     
     DynamicModel = _create_dynamic_model(schema)
 
-    field_lines = []
-    for field in fields:
-        field_name = field.get("name")
-        field_type = field.get("type", "string")
-        description = field.get("description", "")
-        field_lines.append(f"- {field_name} ({field_type}): {description}")
-
-    fields_block = "\n".join(field_lines)
-
-    # Use provided system_prompt if available (for parallel execution), otherwise generate
-    if system_prompt is None:
-        system_prompt = generate_system_prompt(document_type, schema)
-    
-    # Inject Structure Hints into User Prompt
-    structure_context = ""
+    # Build structure hints section if available
+    hints_section = ""
     if structure_hints and isinstance(structure_hints, dict):
         hints_list = []
         if structure_hints.get("has_tables"):
             table_cols = structure_hints.get("table_columns", [])
             col_info = f" with columns: {', '.join(table_cols[:5])}" if table_cols else ""
-            hints_list.append(f"- Document contains {structure_hints.get('table_count', 1)} table(s){col_info}")
+            hints_list.append(f"Document contains {structure_hints.get('table_count', 1)} table(s){col_info}")
         if structure_hints.get("multi_row_entries"):
-            hints_list.append("- Tables have multi-row entries that need merging")
+            hints_list.append("Tables have multi-row entries that need merging")
         if structure_hints.get("has_multi_column_layout"):
-            hints_list.append("- Document has multi-column layout")
+            hints_list.append("Document has multi-column layout")
         if structure_hints.get("section_count", 0) > 0:
-            hints_list.append(f"- Document has {structure_hints['section_count']} sections")
+            hints_list.append(f"Document has {structure_hints['section_count']} sections")
         
         if hints_list:
-            structure_context = "\n\nStructural hints from document analysis:\n" + "\n".join(hints_list) + "\n"
+            hints_section = "<structure_hints>\n" + "\n".join(hints_list) + "\n</structure_hints>\n\n"
 
     user_prompt = (
-        "Extract the following fields from the document. If a field is not present, "
-        "set it to null or an empty list as appropriate. Do not invent data.\n\n"
-        f"Document filename: {metadata.filename}\n\n"
-        "Schema fields (name and description):\n"
-        f"{fields_block}\n\n"
-        f"Also consider the following structural hints:{structure_context}\n\n"
-        "Return a single JSON object where each key is exactly one of the field "
-        "names above.\n\n"
-        "Document content begins below this line:\n"
-        "-----\n"
-        f"{content_to_use}\n"
-        "-----\n"
+        "<instructions>\n"
+        "Extract data from the document according to the schema. "
+        "Return null for missing fields. Do not invent data.\n"
+        "</instructions>\n\n"
+        f"{hints_section}"
+        "<document>\n"
+        f"{markdown_content}\n"
+        "</document>"
     )
 
     # Using gpt-4o-mini for cost-effective extraction
