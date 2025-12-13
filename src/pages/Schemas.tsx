@@ -162,10 +162,18 @@ export default function Schemas() {
                         </div>
                         <h3 className="font-semibold text-dark text-lg">{schema.name}</h3>
                       </div>
-                      {schema.is_public && (
+                      {schema.is_public ? (
                         <span className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-600">
                           System
                         </span>
+                      ) : (
+                        <button
+                          onClick={() => handleDelete(schema.id, schema.name)}
+                          className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition-colors"
+                          title="Delete template"
+                        >
+                          <Trash2 className="h-5 w-5" />
+                        </button>
                       )}
                     </div>
                     <p className="text-sm text-gray-600 flex-1 leading-relaxed mb-8">
@@ -195,21 +203,13 @@ export default function Schemas() {
                           Clone
                         </button>
                         {!schema.is_public && (
-                          <>
-                            <button
-                              onClick={() => handleEdit(schema)}
-                              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold text-dark bg-gray-100 hover:bg-gray-200 rounded-lg transition-all"
-                            >
-                              <Edit className="h-4 w-4" />
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => handleDelete(schema.id, schema.name)}
-                              className="flex items-center justify-center px-4 py-2.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-all"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </>
+                          <button
+                            onClick={() => handleEdit(schema)}
+                            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold text-dark bg-gray-100 hover:bg-gray-200 rounded-lg transition-all"
+                          >
+                            <Edit className="h-4 w-4" />
+                            Edit
+                          </button>
                         )}
                       </div>
                     </div>
