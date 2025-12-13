@@ -1,0 +1,80 @@
+[
+  {
+    "document_number": "1",
+    "filename": "doc1.txt",
+    "file_size": 105,
+    "file_path": "C:\\Users\\oscar\\CascadeProjects\\DocumentProcessor\\document_intake\\documents\\doc1.txt",
+    "processed_date": "2025-12-13",
+    "document_type": "text",
+    "document_type_reason": "leader_inference",
+    "detected_type": "generic",
+    "extracted": {
+      "claim_id": null,
+      "claimant_name": null,
+      "claimant_contact": null,
+      "claim_type": null,
+      "claim_date": "2023-10-27",
+      "incident_date": null,
+      "account_identifier": null,
+      "amount_claimed": 500.0,
+      "currency": "USD",
+      "counterparty": "Acme Corp",
+      "claim_reason": null,
+      "claim_details": null,
+      "supporting_documents": [],
+      "resolution_requested": null
+    }
+  },
+  {
+    "document_number": "2",
+    "filename": "doc2.txt",
+    "file_size": 103,
+    "file_path": "C:\\Users\\oscar\\CascadeProjects\\DocumentProcessor\\document_intake\\documents\\doc2.txt",
+    "processed_date": "2025-12-13",
+    "document_type": "text",
+    "document_type_reason": "leader_inference",
+    "detected_type": "generic",
+    "extracted": {
+      "claim_id": null,
+      "claimant_name": null,
+      "claimant_contact": null,
+      "claim_type": null,
+      "claim_date": "2023-10-28",
+      "incident_date": null,
+      "account_identifier": null,
+      "amount_claimed": 750.0,
+      "currency": "USD",
+      "counterparty": "Beta Inc",
+      "claim_reason": null,
+      "claim_details": null,
+      "supporting_documents": [],
+      "resolution_requested": null
+    }
+  },
+  {
+    "document_number": "3",
+    "filename": "doc3.txt",
+    "file_size": 101,
+    "file_path": "C:\\Users\\oscar\\CascadeProjects\\DocumentProcessor\\document_intake\\documents\\doc3.txt",
+    "processed_date": "2025-12-13",
+    "document_type": "text",
+    "document_type_reason": "leader_inference",
+    "detected_type": "generic",
+    "extracted": {
+      "claim_id": null,
+      "claimant_name": null,
+      "claimant_contact": null,
+      "claim_type": null,
+      "claim_date": "2023-10-29",
+      "incident_date": null,
+      "account_identifier": null,
+      "amount_claimed": 1200.0,
+      "currency": "USD",
+      "counterparty": "Gamma LLC",
+      "claim_reason": null,
+      "claim_details": null,
+      "supporting_documents": [],
+      "resolution_requested": null
+    }
+  }
+]

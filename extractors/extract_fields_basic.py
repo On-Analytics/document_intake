@@ -45,11 +45,13 @@ def extract_fields_basic(
     metadata: DocumentMetadata,
     schema_content: Dict[str, Any],  # Changed from schema_path
     document_type: str = "generic",
+    system_prompt: Optional[str] = None,  # Pre-computed prompt from leader
 ) -> Dict[str, Any]:
     """Extract structured data using the provided schema and an LLM (Basic/Text Mode).
     
     Args:
         schema_content: Direct schema definition from Supabase/templates
+        system_prompt: Optional pre-computed system prompt (for batch processing)
     """
     content = _normalize_garbage_characters(document.page_content or "")
     schema = schema_content
@@ -81,8 +83,9 @@ def extract_fields_basic(
 
     fields_block = "\n".join(field_lines)
 
-    # Generate dynamic system prompt based on doc type and schema
-    system_prompt = generate_system_prompt(document_type, schema)
+    # Use pre-computed prompt or generate if not provided
+    if not system_prompt:
+        system_prompt = generate_system_prompt(document_type, schema)
 
     user_prompt = (
         "Extract the following fields from the document. If a field is not present, "

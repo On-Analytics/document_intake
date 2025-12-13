@@ -124,10 +124,10 @@ def extract_fields_balanced(
         "</document>"
     )
 
-    # Using gpt-4o-mini for cost-effective extraction
-    # Note: If you need higher quality for complex documents, you can override by setting
-    # an environment variable: EXTRACTION_MODEL=gpt-4o
-    model_name = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini")
+    # Using gpt-4o for high-quality extraction
+    # Note: If you need to use a different model, you can override by setting
+    # an environment variable: EXTRACTION_MODEL=model_name
+    model_name = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini")  # gpt-4o
     llm = ChatOpenAI(model=model_name, temperature=0).with_structured_output(
         DynamicModel, method="function_calling"
     )

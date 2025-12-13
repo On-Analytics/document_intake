@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
-import { uploadDocument } from '../lib/api'
+import { uploadDocument, uploadDocumentsBatch } from '../lib/api'
 import Dropzone from '../components/Dropzone'
 import CreateSchemaModal, { SchemaData } from '../components/CreateSchemaModal'
 import SuccessModal from '../components/SuccessModal'
@@ -93,85 +93,107 @@ export default function Dashboard() {
     setErrorMsg(null)
     setProcessingProgress({ current: 0, total: files.length })
 
-    // Initialize file statuses as pending
+    // Initialize file statuses as processing (batch sends all at once)
     const initialStatuses: FileProcessingStatus[] = files.map(file => ({
       file,
-      status: 'pending' as FileStatus
+      status: 'processing' as FileStatus
     }))
     setFileStatuses(initialStatuses)
 
-    setFileStatuses(initialStatuses)
-
     try {
-      // Generate a batch ID for this upload session
-      const batchId = crypto.randomUUID()
+      // Use batch endpoint for parallel processing (up to 5 concurrent on backend)
+      const batchResult = await uploadDocumentsBatch(files, selectedSchemaId)
 
-      // Process all files in parallel for faster results
-      const uploadPromises = files.map(async (file) => {
-
-        // Update status to processing
-        setFileStatuses(prev => prev.map(fs =>
-          fs.file.name === file.name ? { ...fs, status: 'processing' as FileStatus } : fs
-        ))
-
-        try {
-          const data = await uploadDocument(file, selectedSchemaId || undefined, batchId)
-
+      // Update file statuses based on results
+      const updatedStatuses: FileProcessingStatus[] = files.map(file => {
+        const successResult = batchResult.results.find(r => r.results?.source_file === file.name)
+        const errorResult = batchResult.errors.find(e => e.filename === file.name)
+        
+        if (successResult) {
           // Store results in localStorage for History page
-          const storageKey = `extraction_result_${batchId}_${file.name}`
+          const storageKey = `extraction_result_${batchResult.batch_id}_${file.name}`
           localStorage.setItem(storageKey, JSON.stringify({
-            results: data.results,
-            operational_metadata: data.operational_metadata
+            results: successResult.results,
+            operational_metadata: successResult.operational_metadata
           }))
-
-          // Update status to completed
-          setFileStatuses(prev => prev.map(fs =>
-            fs.file.name === file.name ? { ...fs, status: 'completed' as FileStatus } : fs
-          ))
-          setProcessingProgress(prev => ({ ...prev, current: prev.current + 1 }))
-
-          return { file: file.name, success: true, data, batchId: data.batch_id }
-        } catch (err: any) {
-          // Update status to error
-          setFileStatuses(prev => prev.map(fs =>
-            fs.file.name === file.name ? { ...fs, status: 'error' as FileStatus, error: err.message } : fs
-          ))
-          setProcessingProgress(prev => ({ ...prev, current: prev.current + 1 }))
-
-          return { file: file.name, success: false, error: err.message || 'Processing failed', batchId }
+          return { file, status: 'completed' as FileStatus }
+        } else if (errorResult) {
+          return { file, status: 'error' as FileStatus, error: errorResult.error }
         }
+        return { file, status: 'pending' as FileStatus }
       })
+      setFileStatuses(updatedStatuses)
+      setProcessingProgress({ current: files.length, total: files.length })
 
-      // Wait for all uploads to complete
-      const processedResults = await Promise.all(uploadPromises)
-
-      const hasError = processedResults.some(r => !r.success)
-
-      if (hasError) {
-        const failedFiles = processedResults.filter(r => !r.success).map(r => r.file).join(', ')
+      if (batchResult.failed > 0) {
+        const failedFiles = batchResult.errors.map(e => e.filename).join(', ')
         setErrorMsg(`Failed to process: ${failedFiles}`)
         setStatus('idle')
       } else {
         // All successful - prepare summary and show success modal
-        const summary = processedResults.map(r => ({
-          filename: r.file,
-          fieldCount: r.data?.results ? Object.keys(r.data.results).length : 0,
+        const summary = batchResult.results.map(r => ({
+          filename: r.results?.source_file as string || 'Unknown',
+          fieldCount: r.results ? Object.keys(r.results).length : 0,
           status: 'completed' as const
         }))
 
-        // Get batchId from first successful result
-        const batchIdFromResults = processedResults.find(r => r.batchId)?.batchId || null
-
         setStatus('idle')
-        setProcessedFilesCount(files.length)
+        setProcessedFilesCount(batchResult.successful)
         setProcessedFilesSummary(summary)
-        setCurrentBatchId(batchIdFromResults)
+        setCurrentBatchId(batchResult.batch_id)
         setShowSuccessModal(true)
         handleReset()
       }
     } catch (err: any) {
+      // Fallback: if batch endpoint fails, try individual uploads
+      console.warn('Batch upload failed, falling back to individual uploads:', err.message)
+      
+      try {
+        const batchId = crypto.randomUUID()
+        const uploadPromises = files.map(async (file) => {
+          try {
+            const data = await uploadDocument(file, selectedSchemaId || undefined, batchId)
+            const storageKey = `extraction_result_${batchId}_${file.name}`
+            localStorage.setItem(storageKey, JSON.stringify({
+              results: data.results,
+              operational_metadata: data.operational_metadata
+            }))
+            setFileStatuses(prev => prev.map(fs =>
+              fs.file.name === file.name ? { ...fs, status: 'completed' as FileStatus } : fs
+            ))
+            setProcessingProgress(prev => ({ ...prev, current: prev.current + 1 }))
+            return { file: file.name, success: true, data, batchId: data.batch_id }
+          } catch (err: any) {
+            setFileStatuses(prev => prev.map(fs =>
+              fs.file.name === file.name ? { ...fs, status: 'error' as FileStatus, error: err.message } : fs
+            ))
+            setProcessingProgress(prev => ({ ...prev, current: prev.current + 1 }))
+            return { file: file.name, success: false, error: err.message || 'Processing failed', batchId }
+          }
+        })
+
+        const processedResults = await Promise.all(uploadPromises)
+        const hasError = processedResults.some(r => !r.success)
+
+        if (hasError) {
+          const failedFiles = processedResults.filter(r => !r.success).map(r => r.file).join(', ')
+          setErrorMsg(`Failed to process: ${failedFiles}`)
+        } else {
+          const summary = processedResults.map(r => ({
+            filename: r.file,
+            fieldCount: r.data?.results ? Object.keys(r.data.results).length : 0,
+            status: 'completed' as const
+          }))
+          setProcessedFilesCount(files.length)
+          setProcessedFilesSummary(summary)
+          setCurrentBatchId(processedResults.find(r => r.batchId)?.batchId || null)
+          setShowSuccessModal(true)
+          handleReset()
+        }
+      } catch (fallbackErr: any) {
+        setErrorMsg(fallbackErr.message || 'An unexpected error occurred')
+      }
       setStatus('idle')
-      setErrorMsg(err.message || 'An unexpected error occurred')
     }
   }
 

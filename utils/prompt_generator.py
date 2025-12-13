@@ -2,8 +2,12 @@ from typing import Dict, Any, Optional
 import json
 import hashlib
 import os
+from pathlib import Path
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
+
+# Local cache directory (fallback for testing without Supabase)
+LOCAL_PROMPT_CACHE_DIR = Path(__file__).parent.parent / ".prompt_cache"
 
 class SystemPromptOutput(BaseModel):
     system_prompt: str = Field(..., description="The generated system prompt for the extraction task.")
@@ -64,6 +68,28 @@ def _save_prompt_to_supabase(cache_key: str, document_type: str, schema_hash: st
     except Exception:
         return False
 
+
+def _get_cached_prompt_local(cache_key: str) -> Optional[str]:
+    """Fetch cached prompt from local file (fallback for testing)."""
+    try:
+        cache_file = LOCAL_PROMPT_CACHE_DIR / f"{cache_key}.txt"
+        if cache_file.exists():
+            return cache_file.read_text(encoding="utf-8")
+        return None
+    except Exception:
+        return None
+
+
+def _save_prompt_local(cache_key: str, system_prompt: str) -> bool:
+    """Save generated prompt to local file (fallback for testing)."""
+    try:
+        LOCAL_PROMPT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_file = LOCAL_PROMPT_CACHE_DIR / f"{cache_key}.txt"
+        cache_file.write_text(system_prompt, encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
 def generate_system_prompt(
     document_type: str, 
     schema: Dict[str, Any],
@@ -88,6 +114,12 @@ def generate_system_prompt(
     cached_prompt = _get_cached_prompt_from_supabase(cache_key)
     if cached_prompt:
         print(f"[Prompt Generator] Using cached prompt from Supabase for '{document_type}'")
+        return cached_prompt
+    
+    # Fallback: check local file cache (for testing without Supabase)
+    cached_prompt = _get_cached_prompt_local(cache_key)
+    if cached_prompt:
+        print(f"[Prompt Generator] Using cached prompt from LOCAL file for '{document_type}'")
         return cached_prompt
     
     # Convert schema to a string representation for the prompt
@@ -136,7 +168,12 @@ def generate_system_prompt(
         if saved:
             print(f"[Prompt Generator] Saved prompt to Supabase cache for '{document_type}'")
         else:
-            print(f"[Prompt Generator] Warning: Failed to save prompt to Supabase cache")
+            # Fallback: save to local file cache (for testing)
+            local_saved = _save_prompt_local(cache_key, result.system_prompt)
+            if local_saved:
+                print(f"[Prompt Generator] Saved prompt to LOCAL file cache for '{document_type}'")
+            else:
+                print(f"[Prompt Generator] Warning: Failed to save prompt to any cache")
         
         return result.system_prompt
     except Exception as e:
