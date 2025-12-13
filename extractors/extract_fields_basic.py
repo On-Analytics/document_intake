@@ -56,6 +56,9 @@ def extract_fields_basic(
     content = _normalize_garbage_characters(document.page_content or "")
     schema = schema_content
     
+    fields_count = len(schema.get("fields", []))
+    print(f"[BasicExtractor] Starting extraction with {fields_count} fields, doc_type='{document_type}'")
+    
     # Check Cache
     cache_key = generate_cache_key(
         content=content,

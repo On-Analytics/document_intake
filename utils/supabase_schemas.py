@@ -9,6 +9,7 @@ def get_schema_content(schema_id: str) -> Dict[str, Any]:
         supabase_key = os.getenv("VITE_SUPABASE_ANON_KEY")
         
         if not supabase_url or not supabase_key:
+            print(f"[Schema] Missing Supabase credentials")
             raise ValueError("Supabase credentials not configured")
             
         import requests
@@ -18,13 +19,16 @@ def get_schema_content(schema_id: str) -> Dict[str, Any]:
             "Authorization": f"Bearer {supabase_key}",
         }
         
+        print(f"[Schema] Fetching schema {schema_id}")
         resp = requests.get(url, headers=headers, params={"select": "content"}, timeout=5)
         resp.raise_for_status()
         data = resp.json()
         if not data:
+            print(f"[Schema] No schema found for id={schema_id}")
             return {"fields": []}
 
         content = data[0].get("content")
+        print(f"[Schema] Raw content type: {type(content)}, has fields: {'fields' in content if isinstance(content, dict) else 'N/A'}")
 
         # Supabase returns jsonb as objects, but if the column is text we may
         # receive a string. Normalize to dict to avoid empty-field extractions.
@@ -32,12 +36,17 @@ def get_schema_content(schema_id: str) -> Dict[str, Any]:
             try:
                 content = json.loads(content)
             except json.JSONDecodeError:
+                print(f"[Schema] Failed to parse content as JSON")
                 return {"fields": []}
 
         if not isinstance(content, dict):
+            print(f"[Schema] Content is not a dict: {type(content)}")
             return {"fields": []}
 
+        fields_count = len(content.get("fields", []))
+        print(f"[Schema] Loaded schema with {fields_count} fields")
         return content
     
-    except Exception:
+    except Exception as e:
+        print(f"[Schema] Exception fetching schema: {e}")
         return {"fields": []}  # Fallback empty schema
