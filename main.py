@@ -209,7 +209,7 @@ async def process_document(
             router_doc = Document(page_content=full_text, metadata={"source": file.filename})
 
             # 3. Determine Workflow
-            route = route_document(router_doc)
+            route = route_document(router_doc, schema_id=schema_id)
             doc_type = route.get("document_type", "generic")
             workflow_name = route.get("workflow", "basic")
 
@@ -469,7 +469,7 @@ async def _process_single_file(
                     doc_type = "generic"
                     workflow_name = "balanced"
                 else:
-                    route = route_document(router_doc)
+                    route = route_document(router_doc, schema_id=schema_id)
                     doc_type = route.get("document_type", "generic")
                     workflow_name = route.get("workflow", "basic")
                 
