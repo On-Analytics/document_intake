@@ -85,8 +85,6 @@ def route_document(document: Document, schema_id: Optional[str] = None) -> Dict[
     document_type = None
     if schema_id:
         document_type = get_schema_document_type(schema_id)
-        if document_type:
-            pass
 
     # 2. Heuristics: Check file extension for workflow selection
     # .txt files use basic workflow, but still get LLM classification for document_type
@@ -103,6 +101,9 @@ def route_document(document: Document, schema_id: Optional[str] = None) -> Dict[
     )
     cached = get_cached_result(cache_key, cache_dir=ROUTER_CACHE_DIR)
     if cached:
+        # Even if cached, update schema document_type if it's not set
+        if schema_id and not document_type and cached.get("document_type") and cached["document_type"] != "generic":
+            update_schema_document_type(schema_id, cached["document_type"])
         return cached
     
     # 5. Short content optimization
