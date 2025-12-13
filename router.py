@@ -88,9 +88,9 @@ def route_document(document: Document, schema_id: Optional[str] = None) -> Dict[
         if document_type:
             pass
 
-    # 2. Heuristics: Check file extension if available
-    if source.endswith(".txt") and not document_type:
-        return {"workflow": "basic", "document_type": "generic"}
+    # 2. Heuristics: Check file extension for workflow selection
+    # .txt files use basic workflow, but still get LLM classification for document_type
+    force_basic_workflow = source.endswith(".txt")
     
     # 3. Prepare content for analysis, useing utility function 
     content = _normalize_garbage_characters(document.page_content or "")
@@ -119,14 +119,17 @@ def route_document(document: Document, schema_id: Optional[str] = None) -> Dict[
     if schema_id and not document_type and decision["document_type"] != "generic":
         update_schema_document_type(schema_id, decision["document_type"])
     
-    # 8. Save to cache
+    # 8. Determine final workflow (force basic for .txt files)
+    final_workflow = "basic" if force_basic_workflow else decision["workflow"]
+    
+    # 9. Save to cache
     save_to_cache(
         cache_key,
-        {"workflow": decision["workflow"], "document_type": final_doc_type},
+        {"workflow": final_workflow, "document_type": final_doc_type},
         cache_dir=ROUTER_CACHE_DIR,
     )
     
-    return {"workflow": decision["workflow"], "document_type": final_doc_type}
+    return {"workflow": final_workflow, "document_type": final_doc_type}
 
 def get_schema_document_type(schema_id: str) -> Optional[str]:
     """Fetch document_type from Supabase schemas table."""
