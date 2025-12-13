@@ -21,10 +21,11 @@ def get_schema_content(schema_id: str) -> Dict[str, Any]:
         
         print(f"[Schema] Fetching schema {schema_id}")
         resp = requests.get(url, headers=headers, params={"select": "content"}, timeout=5)
+        print(f"[Schema] Response status: {resp.status_code}, body: {resp.text[:500] if resp.text else 'empty'}")
         resp.raise_for_status()
         data = resp.json()
         if not data:
-            print(f"[Schema] No schema found for id={schema_id}")
+            print(f"[Schema] No schema found for id={schema_id} (empty array returned)")
             return {"fields": []}
 
         content = data[0].get("content")
