@@ -132,10 +132,11 @@ def route_document(document: Document, schema_id: Optional[str] = None) -> Dict[
     return {"workflow": final_workflow, "document_type": final_doc_type}
 
 def get_schema_document_type(schema_id: str) -> Optional[str]:
-    """Fetch document_type from Supabase schemas table."""
+    """Fetch document_type from Supabase schemas table using service role key."""
     try:
         supabase_url = os.getenv("VITE_SUPABASE_URL")
-        supabase_key = os.getenv("VITE_SUPABASE_ANON_KEY")
+        # Use service role key for backend operations (bypasses RLS)
+        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("VITE_SUPABASE_ANON_KEY")
         
         if not supabase_url or not supabase_key:
             return None
@@ -157,10 +158,11 @@ def get_schema_document_type(schema_id: str) -> Optional[str]:
 
 
 def update_schema_document_type(schema_id: str, document_type: str) -> None:
-    """Update document_type in Supabase schemas table."""
+    """Update document_type in Supabase schemas table using service role key."""
     try:
         supabase_url = os.getenv("VITE_SUPABASE_URL")
-        supabase_key = os.getenv("VITE_SUPABASE_ANON_KEY")
+        # Use service role key for backend operations (bypasses RLS)
+        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("VITE_SUPABASE_ANON_KEY")
         
         if not supabase_url or not supabase_key:
             print(f"[Router] Cannot update schema document_type: missing Supabase env vars")

@@ -3,10 +3,11 @@ import json
 from typing import Dict, Any
 
 def get_schema_content(schema_id: str) -> Dict[str, Any]:
-    """Fetch schema content from Supabase."""
+    """Fetch schema content from Supabase using service role key to bypass RLS."""
     try:
         supabase_url = os.getenv("VITE_SUPABASE_URL")
-        supabase_key = os.getenv("VITE_SUPABASE_ANON_KEY")
+        # Use service role key for backend operations (bypasses RLS)
+        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("VITE_SUPABASE_ANON_KEY")
         
         if not supabase_url or not supabase_key:
             print(f"[Schema] Missing Supabase credentials")
