@@ -1,5 +1,7 @@
 from typing import Literal, Dict, Optional
 import hashlib
+import json
+import os
 # from functools import lru_cache # Removed in favor of cache_manager
 from langchain_core.documents import Document
 from langchain_openai import ChatOpenAI
@@ -158,6 +160,7 @@ def update_schema_document_type(schema_id: str, document_type: str) -> None:
         supabase_key = os.getenv("VITE_SUPABASE_ANON_KEY")
         
         if not supabase_url or not supabase_key:
+            print(f"[Router] Cannot update schema document_type: missing Supabase env vars")
             return
             
         import requests
@@ -166,15 +169,19 @@ def update_schema_document_type(schema_id: str, document_type: str) -> None:
             "apikey": supabase_key,
             "Authorization": f"Bearer {supabase_key}",
             "Content-Type": "application/json",
+            "Prefer": "return=minimal",
         }
         
+        print(f"[Router] Updating schema {schema_id} with document_type='{document_type}'")
         resp = requests.patch(
             url,
             headers=headers,
-            data=json.dumps({"document_type": document_type}),
+            json={"document_type": document_type},
             timeout=5
         )
-        if not resp.ok:
-            pass
-    except Exception:
-        pass
+        if resp.ok:
+            print(f"[Router] Successfully updated schema document_type")
+        else:
+            print(f"[Router] Failed to update schema document_type: {resp.status_code} - {resp.text}")
+    except Exception as e:
+        print(f"[Router] Exception updating schema document_type: {e}")
