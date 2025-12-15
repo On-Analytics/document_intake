@@ -162,7 +162,7 @@ export default function Dropzone({ onFilesSelect, selectedFiles }: DropzoneProps
           or click to browse
         </p>
         <p className="text-xs text-gray-500 mb-4">
-          PDF, PNG, JPG, JPEG, DOCX, TXT • Max 10MB per file • Multiple files supported
+          PDF, PNG, JPG, JPEG, DOCX, TXT • Max 20 pages per upload batch (non-PDF files count as 1 page)
         </p>
 
         <div className="flex items-center gap-3 text-xs text-gray-500 bg-white/50 px-4 py-2 rounded-full">

@@ -8,9 +8,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from core_pipeline import DocumentMetadata, _normalize_garbage_characters
+from core_pipeline import DocumentMetadata
 from utils.image_utils import convert_pdf_to_images
-from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache, VISION_CACHE_DIR
 
 
 class MarkdownOutput(BaseModel):
@@ -81,17 +80,6 @@ def vision_generate_markdown(
     Args:
         schema_content: Direct schema definition from Supabase/templates
     """
-    # Rest of function remains exactly the same
-    # Check cache first
-    cache_key = generate_cache_key(
-        file_path=str(metadata.file_path),
-        extra_params={"step": "vision_generate_markdown", "model": os.getenv("VISION_MODEL", "gpt-4o-mini")}
-    )
-    
-    cached = get_cached_result(cache_key, cache_dir=VISION_CACHE_DIR)
-    if cached:
-        return cached
-
     system_prompt_text = (
         "You are an expert document summarizer and formatter. "
         "Your goal is to convert the given document content into a clear, "
@@ -170,8 +158,5 @@ def vision_generate_markdown(
         "markdown_content": markdown_content,
         "structure_hints": structure_hints
     }
-    
-    # Save to cache
-    save_to_cache(cache_key, result, cache_dir=VISION_CACHE_DIR)
 
     return result

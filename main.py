@@ -7,6 +7,9 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, Any, Optional
+from datetime import date
+
+import pdfplumber
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,6 +52,40 @@ class BatchProcessResponse(BaseModel):
     results: list[ProcessResponse]
     errors: list[Dict[str, Any]]
 
+
+MAX_PAGES_PER_BATCH = 20
+MAX_PAGES_PER_MONTH = 200
+
+
+def _count_upload_pages(file: UploadFile) -> int:
+    """Count logical pages for upload limiting.
+
+    PDFs count as their number of pages. Non-PDF files count as 1.
+    """
+    suffix = Path(file.filename).suffix.lower()
+    if suffix == ".pdf":
+        try:
+            # pdfplumber can read from file-like objects; ensure we rewind afterwards.
+            with pdfplumber.open(file.file) as pdf:
+                return len(pdf.pages)
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not read PDF page count for '{file.filename}': {str(e)}",
+            )
+        finally:
+            try:
+                file.file.seek(0)
+            except Exception:
+                pass
+
+    # Non-PDF: treat as one logical page
+    try:
+        file.file.seek(0)
+    except Exception:
+        pass
+    return 1
+
 def _get_tenant_id_from_token(auth_header: Optional[str]) -> Optional[str]:
     """Extract tenant_id from JWT token via Supabase."""
     if not auth_header or not auth_header.startswith("Bearer "):
@@ -87,6 +124,89 @@ def _get_tenant_id_from_token(auth_header: Optional[str]) -> Optional[str]:
         return None
     except Exception:
         return None
+
+
+def _get_user_id_from_token(auth_header: Optional[str]) -> Optional[str]:
+    """Extract Supabase auth user id from JWT token via Supabase."""
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return None
+
+    try:
+        token = auth_header.split(" ")[1]
+        supabase_url = os.getenv("VITE_SUPABASE_URL")
+        supabase_key = os.getenv("VITE_SUPABASE_ANON_KEY")
+
+        if not supabase_url or not supabase_key:
+            return None
+
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {token}",
+        }
+        resp = requests.get(f"{supabase_url}/auth/v1/user", headers=headers, timeout=5)
+        if resp.status_code != 200:
+            return None
+
+        user_id = resp.json().get("id")
+        return user_id
+    except Exception:
+        return None
+
+
+def _get_period_start_utc() -> date:
+    """First day of the current month (UTC)."""
+    today = date.today()
+    return date(today.year, today.month, 1)
+
+
+def _adjust_monthly_usage_pages(
+    *,
+    user_id: str,
+    pages_delta: int,
+    authorization: Optional[str],
+    max_pages: int = MAX_PAGES_PER_MONTH,
+) -> bool:
+    """Adjust the user's monthly usage via Supabase RPC.
+
+    Positive deltas are capped; negative deltas act as refunds.
+    """
+    supabase_url = os.getenv("VITE_SUPABASE_URL")
+    supabase_key = os.getenv("VITE_SUPABASE_ANON_KEY")
+    if not supabase_url or not supabase_key:
+        return True
+
+    user_token = authorization.split(" ")[1] if authorization and authorization.startswith("Bearer ") else None
+    auth_token = user_token if user_token else supabase_key
+
+    headers = {
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {auth_token}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "p_user_id": user_id,
+        "p_period_start": _get_period_start_utc().isoformat(),
+        "p_pages": pages_delta,
+        "p_max_pages": max_pages,
+    }
+
+    resp = requests.post(
+        f"{supabase_url}/rest/v1/rpc/increment_usage_pages",
+        headers=headers,
+        json=payload,
+        timeout=5,
+    )
+
+    if resp.status_code != 200:
+        # If quota infra isn't available yet, don't hard-fail processing.
+        return True
+
+    try:
+        return bool(resp.json())
+    except Exception:
+        # Some PostgREST setups return "true"/"false" as text.
+        return resp.text.strip().lower() == "true"
 
 
 def _log_extraction_result(
@@ -648,87 +768,146 @@ async def process_batch(
             results=[],
             errors=[{"filename": "N/A", "error": "No files provided"}],
         )
-    
-    # Step 1: Process LEADER (first file) to determine doc_type and generate system_prompt
-    leader_file = files[0]
-    print(f"[Batch] Processing leader file: {leader_file.filename}")
-    
-    leader_response, leader_error, shared_context = await _process_single_file(
-        file=leader_file,
-        batch_id=batch_id,
-        authorization=authorization,
-        shared_context=None,  # Leader computes its own
-        schema_id=schema_id,
-        schema_content_from_request=schema_content_from_request,
-        document_type=document_type,
-        is_leader=True,
-    )
-    
-    if leader_response:
-        successful_results.append(leader_response)
-    if leader_error:
-        errors.append(leader_error)
-    
-    # Step 2: Process FOLLOWERS in parallel using shared context from leader
-    if len(files) > 1 and shared_context:
-        print(f"[Batch] Processing {len(files) - 1} follower files with shared context (doc_type='{shared_context.doc_type}')")
-        
-        follower_tasks = [
-            _process_single_file(
-                file=f,
-                batch_id=batch_id,
-                authorization=authorization,
-                shared_context=shared_context,  # Reuse leader's computed values
-                schema_id=schema_id,
-                is_leader=False,
+
+    # Enforce per-batch total page limit before processing anything.
+    total_pages = 0
+    per_file_pages: list[Dict[str, Any]] = []
+    pages_by_filename: Dict[str, int] = {}
+    for f in files:
+        pages = _count_upload_pages(f)
+        per_file_pages.append({"filename": f.filename, "pages": pages})
+        pages_by_filename[f.filename] = pages
+        total_pages += pages
+
+    if total_pages > MAX_PAGES_PER_BATCH:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Batch exceeds maximum pages. "
+                f"Total pages={total_pages}, max={MAX_PAGES_PER_BATCH}. "
+                f"Per-file: {per_file_pages}"
+            ),
+        )
+
+    # Monthly quota (per user_id): reserve pages upfront to prevent concurrent overage.
+    user_id = _get_user_id_from_token(authorization)
+    reserved_pages = 0
+    if user_id:
+        ok = _adjust_monthly_usage_pages(
+            user_id=user_id,
+            pages_delta=total_pages,
+            authorization=authorization,
+            max_pages=MAX_PAGES_PER_MONTH,
+        )
+        if not ok:
+            raise HTTPException(
+                status_code=402,
+                detail=f"Monthly quota exceeded. Max {MAX_PAGES_PER_MONTH} pages/month.",
             )
-            for f in files[1:]
-        ]
+        reserved_pages = total_pages
+
+    try:
+        # Step 1: Process LEADER (first file) to determine doc_type and generate system_prompt
+        leader_file = files[0]
+        print(f"[Batch] Processing leader file: {leader_file.filename}")
         
-        # Process followers concurrently with semaphore limiting to 5
-        follower_results = await asyncio.gather(*follower_tasks)
+        leader_response, leader_error, shared_context = await _process_single_file(
+            file=leader_file,
+            batch_id=batch_id,
+            authorization=authorization,
+            shared_context=None,  # Leader computes its own
+            schema_id=schema_id,
+            schema_content_from_request=schema_content_from_request,
+            document_type=document_type,
+            is_leader=True,
+        )
         
-        for response, error, _ in follower_results:
-            if response:
-                successful_results.append(response)
-            if error:
-                errors.append(error)
-    
-    elif len(files) > 1 and not shared_context:
-        # Leader failed to produce shared context, process followers independently
-        print(f"[Batch] Leader failed, processing {len(files) - 1} followers independently")
+        if leader_response:
+            successful_results.append(leader_response)
+        if leader_error:
+            errors.append(leader_error)
         
-        follower_tasks = [
-            _process_single_file(
-                file=f,
-                batch_id=batch_id,
-                authorization=authorization,
-                shared_context=None,
-                schema_id=schema_id,
-                schema_content_from_request=schema_content_from_request,
-                document_type=document_type,
-                is_leader=False,
+        # Step 2: Process FOLLOWERS in parallel using shared context from leader
+        if len(files) > 1 and shared_context:
+            print(f"[Batch] Processing {len(files) - 1} follower files with shared context (doc_type='{shared_context.doc_type}')")
+            
+            follower_tasks = [
+                _process_single_file(
+                    file=f,
+                    batch_id=batch_id,
+                    authorization=authorization,
+                    shared_context=shared_context,  # Reuse leader's computed values
+                    schema_id=schema_id,
+                    is_leader=False,
+                )
+                for f in files[1:]
+            ]
+            
+            # Process followers concurrently with semaphore limiting to 5
+            follower_results = await asyncio.gather(*follower_tasks)
+            
+            for response, error, _ in follower_results:
+                if response:
+                    successful_results.append(response)
+                if error:
+                    errors.append(error)
+        
+        elif len(files) > 1 and not shared_context:
+            # Leader failed to produce shared context, process followers independently
+            print(f"[Batch] Leader failed, processing {len(files) - 1} followers independently")
+            
+            follower_tasks = [
+                _process_single_file(
+                    file=f,
+                    batch_id=batch_id,
+                    authorization=authorization,
+                    shared_context=None,
+                    schema_id=schema_id,
+                    schema_content_from_request=schema_content_from_request,
+                    document_type=document_type,
+                    is_leader=False,
+                )
+                for f in files[1:]
+            ]
+            
+            follower_results = await asyncio.gather(*follower_tasks)
+            
+            for response, error, _ in follower_results:
+                if response:
+                    successful_results.append(response)
+                if error:
+                    errors.append(error)
+
+        return BatchProcessResponse(
+            status="completed" if not errors else "partial" if successful_results else "failed",
+            batch_id=batch_id,
+            total_files=len(files),
+            successful=len(successful_results),
+            failed=len(errors),
+            results=successful_results,
+            errors=errors,
+        )
+    finally:
+        # Refund reserved pages for non-successful files so only successful processing is charged.
+        if user_id and reserved_pages:
+            successful_filenames = {
+                r.results.get("source_file")
+                for r in successful_results
+                if isinstance(r.results, dict)
+            }
+            successful_pages = sum(
+                pages_by_filename.get(name, 1)
+                for name in successful_filenames
+                if name
             )
-            for f in files[1:]
-        ]
-        
-        follower_results = await asyncio.gather(*follower_tasks)
-        
-        for response, error, _ in follower_results:
-            if response:
-                successful_results.append(response)
-            if error:
-                errors.append(error)
-    
-    return BatchProcessResponse(
-        status="completed" if not errors else "partial" if successful_results else "failed",
-        batch_id=batch_id,
-        total_files=len(files),
-        successful=len(successful_results),
-        failed=len(errors),
-        results=successful_results,
-        errors=errors,
-    )
+            refund_pages = max(reserved_pages - successful_pages, 0)
+            if refund_pages:
+                _adjust_monthly_usage_pages(
+                    user_id=user_id,
+                    pages_delta=-refund_pages,
+                    authorization=authorization,
+                    max_pages=MAX_PAGES_PER_MONTH,
+                )
 
 
 if __name__ == "__main__":

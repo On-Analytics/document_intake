@@ -14,7 +14,7 @@ def convert_pdf_to_images(pdf_path: str) -> List[str]:
             for page in pdf.pages:
                 # Convert page to image with reasonable resolution
                 # resolution=300 is good for OCR/Vision
-                im = page.to_image(resolution=300).original
+                im = page.to_image(resolution=200).original
                 
                 # Convert PIL Image to base64
                 buffered = io.BytesIO()

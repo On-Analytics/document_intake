@@ -6,6 +6,7 @@ import Dropzone from '../components/Dropzone'
 import CreateSchemaModal, { SchemaData } from '../components/CreateSchemaModal'
 import SuccessModal from '../components/SuccessModal'
 import { Loader2, Plus, Sparkles, FileText, AlertCircle, Copy, XCircle, Check, CheckCircle2, ChevronLeft, ChevronRight, Eye } from 'lucide-react'
+import * as pdfjsLib from 'pdfjs-dist'
 
 type FileStatus = 'pending' | 'processing' | 'completed' | 'error'
 
@@ -22,6 +23,9 @@ export default function Dashboard() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [processingProgress, setProcessingProgress] = useState({ current: 0, total: 0 })
   const [fileStatuses, setFileStatuses] = useState<FileProcessingStatus[]>([])
+
+  const [isCountingPages, setIsCountingPages] = useState(false)
+  const [totalSelectedPages, setTotalSelectedPages] = useState<number>(0)
 
   // Document Preview State
   const [previewIndex, setPreviewIndex] = useState(0)
@@ -64,6 +68,61 @@ export default function Dashboard() {
     setPreviewIndex(0)
   }, [files.length])
 
+  useEffect(() => {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+      'pdfjs-dist/build/pdf.worker.min.mjs',
+      import.meta.url
+    ).toString()
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const countPdfPages = async (file: File): Promise<number> => {
+      const buf = await file.arrayBuffer()
+      const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise
+      const pages = pdf.numPages
+      await pdf.destroy()
+      return pages
+    }
+
+    const computeTotalPages = async () => {
+      if (files.length === 0) {
+        setTotalSelectedPages(0)
+        setIsCountingPages(false)
+        return
+      }
+
+      setIsCountingPages(true)
+      try {
+        const counts = await Promise.all(
+          files.map(async (f) => {
+            const isPdf = f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
+            if (!isPdf) return 1
+            return await countPdfPages(f)
+          })
+        )
+
+        if (cancelled) return
+        setTotalSelectedPages(counts.reduce((a, b) => a + b, 0))
+      } catch {
+        if (cancelled) return
+        // If counting fails (corrupted PDF, etc.), fall back to non-blocking estimate.
+        setTotalSelectedPages(files.length)
+      } finally {
+        if (!cancelled) setIsCountingPages(false)
+      }
+    }
+
+    computeTotalPages()
+
+    return () => {
+      cancelled = true
+    }
+  }, [files])
+
+  const isOverPageLimit = totalSelectedPages > 20
+
   // Fetch Schemas
   const { data: schemas, refetch: refetchSchemas } = useQuery({
     queryKey: ['schemas'],
@@ -82,6 +141,16 @@ export default function Dashboard() {
 
   const handleExtract = async () => {
     if (files.length === 0) return
+
+    if (isCountingPages) {
+      setErrorMsg('Calculating page count. Please wait a moment and try again.')
+      return
+    }
+
+    if (isOverPageLimit) {
+      setErrorMsg('Upload limit exceeded. Max 20 pages per upload batch.')
+      return
+    }
 
     // Require a template/schema to be selected; backend no longer supports auto-schema mode
     if (!selectedSchemaId) {
@@ -325,6 +394,13 @@ export default function Dashboard() {
                             ? `${files.length} file${files.length > 1 ? 's' : ''} ready • ${schemas?.find(s => s.id === selectedSchemaId)?.name ?? 'Template selected'}`
                             : 'Select a template to continue'}
                       </p>
+                      {files.length > 0 && (
+                        <p className={`text-xs mt-1 ${isOverPageLimit ? 'text-red-600' : 'text-gray-500'}`}>
+                          {isCountingPages
+                            ? 'Counting pages...'
+                            : `Total pages: ${totalSelectedPages} / 20 (non-PDF files count as 1 page)`}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -338,7 +414,7 @@ export default function Dashboard() {
                     )}
                     <button
                       onClick={handleExtract}
-                      disabled={files.length === 0 || status === 'processing' || !selectedSchemaId}
+                      disabled={files.length === 0 || status === 'processing' || !selectedSchemaId || isCountingPages || isOverPageLimit}
                       className="flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-dark hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                     >
                       {status === 'processing' ? (
@@ -355,6 +431,12 @@ export default function Dashboard() {
                     </button>
                   </div>
                 </div>
+
+                {files.length > 0 && isOverPageLimit && status === 'idle' && (
+                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                    Upload limit exceeded: max 20 pages per batch. Remove some files/pages and try again.
+                  </div>
+                )}
               </div>
             </div>
 

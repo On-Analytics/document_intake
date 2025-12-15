@@ -38,6 +38,10 @@ def generate_cache_key(
     if extra_params:
         if "step" in extra_params:
             components.append(f"step:{extra_params['step']}")
+        if "model" in extra_params:
+            components.append(f"model:{extra_params['model']}")
+        if "dpi" in extra_params:
+            components.append(f"dpi:{extra_params['dpi']}")
         if "document_type" in extra_params:
             components.append(f"doc_type:{extra_params['document_type']}")
         if "schema_id" in extra_params:
