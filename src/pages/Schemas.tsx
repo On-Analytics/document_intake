@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { Plus, Code, FileText, Edit, Eye, Trash2, Copy } from 'lucide-react'
 import CreateSchemaModal, { SchemaData } from '../components/CreateSchemaModal'
+import { deleteSchema } from '../lib/api'
 
 export default function Schemas() {
   const queryClient = useQueryClient()
@@ -28,12 +29,8 @@ export default function Schemas() {
   // Delete Schema Mutation
   const deleteMutation = useMutation({
     mutationFn: async (schemaId: string) => {
-      const { error } = await supabase
-        .from('schemas')
-        .delete()
-        .eq('id', schemaId)
-
-      if (error) throw error
+      // Use the backend API endpoint to ensure prompt cache is also cleaned up
+      await deleteSchema(schemaId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['schemas'] })

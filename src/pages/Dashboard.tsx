@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
-import { uploadDocument, uploadDocumentsBatch } from '../lib/api'
+import { uploadDocumentsBatch } from '../lib/api'
 import Dropzone from '../components/Dropzone'
 import CreateSchemaModal, { SchemaData } from '../components/CreateSchemaModal'
 import SuccessModal from '../components/SuccessModal'
-import { Loader2, Plus, Sparkles, FileText, AlertCircle, Copy, XCircle, Check, CheckCircle2, ChevronLeft, ChevronRight, Eye } from 'lucide-react'
+import { Loader2, Plus, Sparkles, FileText, AlertCircle, Copy, Check, ChevronLeft, ChevronRight, Eye } from 'lucide-react'
 import * as pdfjsLib from 'pdfjs-dist'
 
 type FileStatus = 'pending' | 'processing' | 'completed' | 'error'
@@ -23,6 +23,8 @@ export default function Dashboard() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [processingProgress, setProcessingProgress] = useState({ current: 0, total: 0 })
   const [fileStatuses, setFileStatuses] = useState<FileProcessingStatus[]>([])
+
+  const [processingElapsedSeconds, setProcessingElapsedSeconds] = useState<number>(0)
 
   const [isCountingPages, setIsCountingPages] = useState(false)
   const [totalSelectedPages, setTotalSelectedPages] = useState<number>(0)
@@ -74,6 +76,22 @@ export default function Dashboard() {
       import.meta.url
     ).toString()
   }, [])
+
+  useEffect(() => {
+    if (status !== 'processing') {
+      setProcessingElapsedSeconds(0)
+      return
+    }
+
+    const startedAt = Date.now()
+    setProcessingElapsedSeconds(0)
+
+    const timer = window.setInterval(() => {
+      setProcessingElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000))
+    }, 1000)
+
+    return () => window.clearInterval(timer)
+  }, [status])
 
   useEffect(() => {
     let cancelled = false
@@ -214,54 +232,7 @@ export default function Dashboard() {
         handleReset()
       }
     } catch (err: any) {
-      // Fallback: if batch endpoint fails, try individual uploads
-      console.warn('Batch upload failed, falling back to individual uploads:', err.message)
-      
-      try {
-        const batchId = crypto.randomUUID()
-        const uploadPromises = files.map(async (file) => {
-          try {
-            const data = await uploadDocument(file, selectedSchemaId || undefined, batchId)
-            const storageKey = `extraction_result_${batchId}_${file.name}`
-            localStorage.setItem(storageKey, JSON.stringify({
-              results: data.results,
-              operational_metadata: data.operational_metadata
-            }))
-            setFileStatuses(prev => prev.map(fs =>
-              fs.file.name === file.name ? { ...fs, status: 'completed' as FileStatus } : fs
-            ))
-            setProcessingProgress(prev => ({ ...prev, current: prev.current + 1 }))
-            return { file: file.name, success: true, data, batchId: data.batch_id }
-          } catch (err: any) {
-            setFileStatuses(prev => prev.map(fs =>
-              fs.file.name === file.name ? { ...fs, status: 'error' as FileStatus, error: err.message } : fs
-            ))
-            setProcessingProgress(prev => ({ ...prev, current: prev.current + 1 }))
-            return { file: file.name, success: false, error: err.message || 'Processing failed', batchId }
-          }
-        })
-
-        const processedResults = await Promise.all(uploadPromises)
-        const hasError = processedResults.some(r => !r.success)
-
-        if (hasError) {
-          const failedFiles = processedResults.filter(r => !r.success).map(r => r.file).join(', ')
-          setErrorMsg(`Failed to process: ${failedFiles}`)
-        } else {
-          const summary = processedResults.map(r => ({
-            filename: r.file,
-            fieldCount: r.data?.results ? Object.keys(r.data.results).length : 0,
-            status: 'completed' as const
-          }))
-          setProcessedFilesCount(files.length)
-          setProcessedFilesSummary(summary)
-          setCurrentBatchId(processedResults.find(r => r.batchId)?.batchId || null)
-          setShowSuccessModal(true)
-          handleReset()
-        }
-      } catch (fallbackErr: any) {
-        setErrorMsg(fallbackErr.message || 'An unexpected error occurred')
-      }
+      setErrorMsg(err?.message || 'Batch processing failed')
       setStatus('idle')
     }
   }
@@ -441,35 +412,38 @@ export default function Dashboard() {
             </div>
 
             {/* Progress Indicator */}
-            {status === 'processing' && fileStatuses.length > 0 && (
+            {status === 'processing' && (
               <div className="mt-4 bg-white rounded-xl border border-gray-200 overflow-hidden">
-                <div className="p-4 border-b border-gray-100">
+                <div className="p-4">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-semibold text-dark">Processing files...</span>
-                    <span className="text-sm font-bold text-primary">
-                      {Math.round((processingProgress.current / processingProgress.total) * 100)}%
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 text-primary animate-spin" />
+                      <span className="text-sm font-semibold text-dark">Processing…</span>
+                    </div>
+                    <span className="text-xs text-gray-500">
+                      {processingElapsedSeconds}s elapsed
                     </span>
                   </div>
-                  <div className="bg-gray-100 rounded-full h-1.5 overflow-hidden">
-                    <div
-                      className="bg-primary h-1.5 rounded-full transition-all duration-500"
-                      style={{ width: `${(processingProgress.current / processingProgress.total) * 100}%` }}
-                    />
+
+                  <div className="flex items-center justify-between text-xs text-gray-600 mb-2">
+                    <span>
+                      {processingProgress.current}/{processingProgress.total || files.length} files
+                    </span>
+                    <span>
+                      {fileStatuses.filter(s => s.status === 'completed').length} completed
+                      {fileStatuses.some(s => s.status === 'error')
+                        ? ` • ${fileStatuses.filter(s => s.status === 'error').length} failed`
+                        : ''}
+                    </span>
                   </div>
-                </div>
-                <div className="max-h-48 overflow-y-auto">
-                  {fileStatuses.map((fileStatus, index) => (
-                    <div key={index} className="flex items-center justify-between px-4 py-2.5 border-b border-gray-50 last:border-0">
-                      <span className="truncate text-sm text-gray-700">{fileStatus.file.name}</span>
-                      {fileStatus.status === 'completed' ? (
-                        <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
-                      ) : fileStatus.status === 'error' ? (
-                        <XCircle className="h-4 w-4 text-red-500 shrink-0" />
-                      ) : (
-                        <Loader2 className="h-4 w-4 text-primary animate-spin shrink-0" />
-                      )}
-                    </div>
-                  ))}
+
+                  <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
+                    <div className="h-2 w-1/2 bg-primary/70 animate-pulse" />
+                  </div>
+
+                  <p className="mt-2 text-xs text-gray-500">
+                    This can take 15–30 seconds per PDF.
+                  </p>
                 </div>
               </div>
             )}

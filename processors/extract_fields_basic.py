@@ -5,7 +5,6 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, create_model, Field
 
 from core_pipeline import BASE_DIR, DocumentMetadata, _normalize_garbage_characters
-from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache, EXTRACTION_CACHE_DIR
 from utils.prompt_generator import generate_system_prompt
 
 def _get_python_type(type_str: str) -> Type:
@@ -58,20 +57,6 @@ def extract_fields_basic(
     
     fields_count = len(schema.get("fields", []))
     print(f"[BasicExtractor] Starting extraction with {fields_count} fields, doc_type='{document_type}'")
-    
-    # Check Cache
-    cache_key = generate_cache_key(
-        content=content,
-        extra_params={
-            "step": "extract_fields_basic", 
-            "schema": schema, 
-            "doc_type": document_type
-        }
-    )
-    
-    cached = get_cached_result(cache_key, cache_dir=EXTRACTION_CACHE_DIR)
-    if cached:
-        return cached
 
     # Generate the Pydantic model dynamically based on the loaded schema
     DynamicModel = _create_dynamic_model(schema)
@@ -116,6 +101,5 @@ def extract_fields_basic(
     )
     
     result = model.model_dump()
-    save_to_cache(cache_key, result, cache_dir=EXTRACTION_CACHE_DIR)
 
     return result

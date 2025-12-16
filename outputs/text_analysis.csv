@@ -1,4 +1,0 @@
-account_identifier,amount_claimed,claim_date,claim_details,claim_id,claim_reason,claim_type,claimant_contact,claimant_name,counterparty,currency,detected_type,document_number,document_type,document_type_reason,file_path,file_size,filename,incident_date,processed_date,resolution_requested,supporting_documents
-,500.0,2023-10-27,,,,,,,Acme Corp,USD,generic,1,text,leader_inference,C:\Users\oscar\CascadeProjects\DocumentProcessor\document_intake\documents\doc1.txt,105,doc1.txt,,2025-12-13,,
-,750.0,2023-10-28,,,,,,,Beta Inc,USD,generic,2,text,leader_inference,C:\Users\oscar\CascadeProjects\DocumentProcessor\document_intake\documents\doc2.txt,103,doc2.txt,,2025-12-13,,
-,1200.0,2023-10-29,,,,,,,Gamma LLC,USD,generic,3,text,leader_inference,C:\Users\oscar\CascadeProjects\DocumentProcessor\document_intake\documents\doc3.txt,101,doc3.txt,,2025-12-13,,

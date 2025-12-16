@@ -1,6 +1,6 @@
 import os
 import json
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 def get_schema_content(schema_id: str) -> Dict[str, Any]:
     """Fetch schema content from Supabase using service role key to bypass RLS."""
@@ -52,3 +52,57 @@ def get_schema_content(schema_id: str) -> Dict[str, Any]:
     except Exception as e:
         print(f"[Schema] Exception fetching schema: {e}")
         return {"fields": []}  # Fallback empty schema
+
+
+def get_schema_details(schema_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch full schema details including document_type and content."""
+    try:
+        supabase_url = os.getenv("VITE_SUPABASE_URL")
+        # Use service role key for backend operations (bypasses RLS)
+        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("VITE_SUPABASE_ANON_KEY")
+        
+        if not supabase_url or not supabase_key:
+            return None
+            
+        import requests
+        url = f"{supabase_url.rstrip('/')}/rest/v1/schemas?id=eq.{schema_id}"
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}",
+        }
+        
+        resp = requests.get(url, headers=headers, params={"select": "id,document_type,content"}, timeout=5)
+        if resp.ok:
+            data = resp.json()
+            if data:
+                return data[0]
+        return None
+    except Exception as e:
+        print(f"[Schema] Exception fetching schema details: {e}")
+        return None
+
+
+def delete_schema(schema_id: str) -> bool:
+    """Delete a schema from the Supabase schemas table."""
+    try:
+        supabase_url = os.getenv("VITE_SUPABASE_URL")
+        # Use service role key for backend operations (bypasses RLS)
+        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("VITE_SUPABASE_ANON_KEY")
+        
+        if not supabase_url or not supabase_key:
+            return False
+            
+        import requests
+        url = f"{supabase_url.rstrip('/')}/rest/v1/schemas?id=eq.{schema_id}"
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}",
+        }
+        
+        print(f"[Schema] Deleting schema {schema_id}")
+        resp = requests.delete(url, headers=headers, timeout=5)
+        # Supabase returns 204 No Content on successful delete
+        return resp.status_code in [200, 204]
+    except Exception as e:
+        print(f"[Schema] Exception deleting schema: {e}")
+        return False

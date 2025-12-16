@@ -11,76 +11,22 @@ export interface ProcessResult {
 }
 
 export interface BatchProcessResult {
-  status: 'completed' | 'partial' | 'failed'
+  status: string
   batch_id: string
   total_files: number
   successful: number
   failed: number
-  results: ProcessResult[]
-  errors: Array<{ filename: string; error: string }>
-}
-
-export async function uploadDocument(file: File, schemaId?: string, batchId?: string) {
-  const { data: { session } } = await supabase.auth.getSession()
-
-  if (!session) {
-    throw new Error('Not authenticated')
-  }
-  const formData = new FormData()
-  formData.append('file', file)
-
-  // Add batch_id for grouping multiple files
-  if (batchId) {
-    formData.append('batch_id', batchId)
-  }
-
-  // If schema ID is provided, fetch the schema content and send it
-  if (schemaId) {
-    formData.append('schema_id', schemaId)
-
-    const { data: schema, error } = await supabase
-      .from('schemas')
-      .select('content, document_type')
-      .eq('id', schemaId)
-      .single()
-
-    if (error) {
-      throw new Error('Failed to fetch schema')
-    }
-
-    if (schema && schema.content) {
-      formData.append('schema_content', JSON.stringify(schema.content))
-    }
-
-    if (schema && schema.document_type) {
-      formData.append('document_type', schema.document_type)
-    }
-  }
-
-  try {
-    const response = await fetch(`${API_URL}/process`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${session.access_token}`
-      },
-      body: formData
-    })
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      try {
-        const error = JSON.parse(errorText)
-        throw new Error(error.detail || 'Upload failed')
-      } catch {
-        throw new Error(`Upload failed: ${response.status} ${response.statusText}`)
-      }
-    }
-
-    const result = await response.json()
-    return result
-  } catch (error) {
-    throw error
-  }
+  results: Array<{
+    status: string
+    document_id: string
+    results: any
+    operational_metadata: any
+    batch_id: string
+  }>
+  errors: Array<{
+    filename: string
+    error: string
+  }>
 }
 
 export async function uploadDocumentsBatch(
@@ -94,7 +40,7 @@ export async function uploadDocumentsBatch(
   }
 
   const formData = new FormData()
-  
+
   // Append all files
   for (const file of files) {
     formData.append('files', file)
@@ -142,4 +88,29 @@ export async function uploadDocumentsBatch(
   }
 
   return await response.json()
+}
+
+export async function deleteSchema(schemaId: string): Promise<void> {
+  const { data: { session } } = await supabase.auth.getSession()
+
+  if (!session) {
+    throw new Error('Not authenticated')
+  }
+
+  const response = await fetch(`${API_URL}/schemas/${schemaId}`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${session.access_token}`
+    }
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    try {
+      const error = JSON.parse(errorText)
+      throw new Error(error.detail || 'Delete schema failed')
+    } catch {
+      throw new Error(`Delete schema failed: ${response.status} ${response.statusText}`)
+    }
+  }
 }

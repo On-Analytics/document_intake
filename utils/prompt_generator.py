@@ -67,6 +67,28 @@ def _save_prompt_to_supabase(cache_key: str, document_type: str, schema_hash: st
         return True
     except Exception:
         return False
+    except Exception:
+        return False
+
+
+def delete_prompt_from_cache(cache_key: str) -> bool:
+    """Delete a prompt from the Supabase prompt_cache table."""
+    try:
+        import requests
+        supabase_url = os.getenv("VITE_SUPABASE_URL")
+        if not supabase_url:
+            return False
+        
+        url = f"{supabase_url.rstrip('/')}/rest/v1/prompt_cache"
+        params = {"cache_key": f"eq.{cache_key}"}
+        
+        print(f"[Prompt Generator] Deleting prompt cache for key: {cache_key}")
+        resp = requests.delete(url, headers=_get_supabase_headers(), params=params, timeout=5)
+        # Supabase returns 204 No Content on successful delete
+        return resp.status_code in [200, 204]
+    except Exception as e:
+        print(f"[Prompt Generator] Failed to delete prompt cache: {e}")
+        return False
 
 
 def _get_cached_prompt_local(cache_key: str) -> Optional[str]:
@@ -90,6 +112,23 @@ def _save_prompt_local(cache_key: str, system_prompt: str) -> bool:
     except Exception:
         return False
 
+
+def calculate_prompt_cache_key(document_type: str, schema: Dict[str, Any]) -> tuple[str, str]:
+    """
+    Calculate the cache key and schema hash for a given document type and schema.
+    Returns (cache_key, schema_hash).
+    """
+    # Compute a stable hash of the schema based on canonical JSON
+    # This ensures that logically identical schemas (e.g., from templates or Supabase)
+    # map to the same cache key, even if key order differs.
+    schema_canonical = json.dumps(schema, sort_keys=True, separators=(",", ":"))
+    schema_hash = hashlib.sha256(schema_canonical.encode("utf-8")).hexdigest()
+
+    # Generate cache key from document_type and schema_hash
+    cache_key = hashlib.sha256(f"{document_type}:{schema_hash}".encode("utf-8")).hexdigest()
+    
+    return cache_key, schema_hash
+
 def generate_system_prompt(
     document_type: str, 
     schema: Dict[str, Any],
@@ -101,14 +140,7 @@ def generate_system_prompt(
     Cached in Supabase prompt_cache table for persistence across deployments.
     """
     
-    # Compute a stable hash of the schema based on canonical JSON
-    # This ensures that logically identical schemas (e.g., from templates or Supabase)
-    # map to the same cache key, even if key order differs.
-    schema_canonical = json.dumps(schema, sort_keys=True, separators=(",", ":"))
-    schema_hash = hashlib.sha256(schema_canonical.encode("utf-8")).hexdigest()
-
-    # Generate cache key from document_type and schema_hash
-    cache_key = hashlib.sha256(f"{document_type}:{schema_hash}".encode("utf-8")).hexdigest()
+    cache_key, schema_hash = calculate_prompt_cache_key(document_type, schema)
     
     # Check Supabase cache first (persistent across deployments)
     cached_prompt = _get_cached_prompt_from_supabase(cache_key)

@@ -20,7 +20,7 @@ import requests
 from router import route_document
 from langchain_community.document_loaders import PDFPlumberLoader, TextLoader, Docx2txtLoader
 from langchain_core.documents import Document
-from utils.supabase_schemas import get_schema_content
+from utils.supabase_schemas import get_schema_content, get_schema_details
 
 # Initialize FastAPI app
 app = FastAPI(title="Document Processor API", version="1.0.0")
@@ -85,6 +85,32 @@ def _count_upload_pages(file: UploadFile) -> int:
     except Exception:
         pass
     return 1
+
+
+def _load_file_content(tmp_path: str, is_pdf: bool, is_txt: bool, is_docx: bool) -> tuple[str, int]:
+    """Synchronous helper to load file content, to be run in a thread. Returns (text, page_count)."""
+    print(f"[Loader] Starting load for {tmp_path} (pdf={is_pdf}, txt={is_txt}, docx={is_docx})")
+    try:
+        if is_pdf:
+            loader = PDFPlumberLoader(tmp_path)
+        elif is_txt:
+            loader = TextLoader(tmp_path, encoding="utf-8")
+        else:
+            # docx
+            loader = Docx2txtLoader(tmp_path)
+        
+        docs = loader.load()
+        if not docs:
+            print(f"[Loader] No documents returned for {tmp_path}")
+            raise ValueError("Could not extract text from document")
+        
+        text = "\n".join([d.page_content for d in docs])
+        page_count = len(docs)
+        print(f"[Loader] Successfully loaded {len(text)} chars from {tmp_path} ({page_count} pages)")
+        return text, page_count
+    except Exception as e:
+        print(f"[Loader] Error loading {tmp_path}: {e}")
+        raise
 
 def _get_tenant_id_from_token(auth_header: Optional[str]) -> Optional[str]:
     """Extract tenant_id from JWT token via Supabase."""
@@ -284,6 +310,12 @@ async def process_document(
     """
     start_time = time.time()
     tenant_id = _get_tenant_id_from_token(authorization)
+    print(f"[Process] START filename='{file.filename}' schema_id='{schema_id}' document_type='{document_type}' batch_id='{batch_id}'")
+
+    raise HTTPException(
+        status_code=410,
+        detail="Single-file processing is deprecated. Use POST /process-batch instead.",
+    )
     
     # Extract user token for RLS-compliant inserts
     user_token = authorization.split(" ")[1] if authorization and authorization.startswith("Bearer ") else None
@@ -297,6 +329,7 @@ async def process_document(
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         shutil.copyfileobj(file.file, tmp)
         tmp_path = tmp.name
+    print(f"[Process] Temp file saved: {tmp_path}")
 
     temp_schema_path = None # Track temp schema file cleanup
 
@@ -312,13 +345,20 @@ async def process_document(
         if is_pdf or is_txt or is_docx:
             # Use appropriate loader based on file type
             if is_pdf:
+                print("[Process] Loading PDF via PDFPlumberLoader")
                 loader = PDFPlumberLoader(tmp_path)
             elif is_txt:
+                print("[Process] Loading TXT via TextLoader")
                 loader = TextLoader(tmp_path, encoding="utf-8")
             else:  # .docx
+                print("[Process] Loading DOCX via Docx2txtLoader")
                 loader = Docx2txtLoader(tmp_path)
 
-            docs = loader.load()
+            load_start = time.time()
+            # Loader is synchronous and can block; run it in a thread so we don't
+            # stall the event loop under concurrency.
+            docs = await asyncio.to_thread(loader.load)
+            print(f"[Process] Document loaded in {int((time.time() - load_start) * 1000)}ms (pages={len(docs) if docs else 0})")
 
             if not docs:
                 raise HTTPException(status_code=400, detail="Could not extract text from document")
@@ -329,7 +369,10 @@ async def process_document(
             router_doc = Document(page_content=full_text, metadata={"source": file.filename})
 
             # 3. Determine Workflow
+            print("[Process] Routing document (LLM may be called if cache miss)")
+            route_start = time.time()
             route = route_document(router_doc, schema_id=schema_id)
+            print(f"[Process] Routing complete in {int((time.time() - route_start) * 1000)}ms -> {route}")
             doc_type = route.get("document_type", "generic")
             workflow_name = route.get("workflow", "basic")
 
@@ -351,6 +394,8 @@ async def process_document(
             doc_type = document_type
 
         # 4. Load Schema Content
+        print(f"[Process] Loading schema content (schema_id='{schema_id}', request_schema_provided={bool(schema_content_from_request)})")
+        schema_start = time.time()
         schema_content = None
         if schema_id:
             schema_content = get_schema_content(schema_id)
@@ -365,6 +410,8 @@ async def process_document(
         if not schema_content:
             raise HTTPException(status_code=400, detail="No schema provided. Please select a template or provide schema content.")
 
+        print(f"[Process] Schema loaded in {int((time.time() - schema_start) * 1000)}ms (fields={len(schema_content.get('fields', [])) if isinstance(schema_content, dict) else 'n/a'})")
+
         # Write Schema to Temp File (for any extractors that might need file path)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".json", mode="w", encoding="utf-8") as tmp_schema:
             json.dump(schema_content, tmp_schema)
@@ -372,9 +419,9 @@ async def process_document(
 
         # 5. Run Extraction Workflow
         from core_pipeline import DocumentMetadata
-        from extractors.extract_fields_basic import extract_fields_basic
-        from extractors.extract_fields_balanced import extract_fields_balanced
-        from extractors.vision_generate_markdown import vision_generate_markdown
+        from processors.extract_fields_basic import extract_fields_basic
+        from processors.extract_fields_balanced import extract_fields_balanced
+        from processors.vision_generate_markdown import vision_generate_markdown
 
         # Create metadata object required by extractors
         doc_metadata = DocumentMetadata(
@@ -388,32 +435,35 @@ async def process_document(
         extraction_result = {}
 
         if workflow_name == "balanced":
+            print(f"[Process] Running workflow='balanced' doc_type='{doc_type}' (vision + extraction)")
             # Vision + Text Extraction with Parallel Prompt Generation
             from utils.prompt_generator import generate_system_prompt
             
-            # Run vision_generate_markdown and generate_system_prompt in parallel
-            # This reduces latency by ~1-3 seconds when prompt is not cached
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                vision_future = executor.submit(
+            # Run vision_generate_markdown and generate_system_prompt in parallel.
+            # Both are synchronous and can block; run them in threads so we don't
+            # stall the event loop.
+            vision_wait_start = time.time()
+            vision_result, system_prompt = await asyncio.gather(
+                asyncio.to_thread(
                     vision_generate_markdown,
                     document=router_doc,
                     metadata=doc_metadata,
-                    schema_content=schema_content
-                )
-                prompt_future = executor.submit(
+                    schema_content=schema_content,
+                ),
+                asyncio.to_thread(
                     generate_system_prompt,
                     document_type=doc_type,
-                    schema=schema_content
-                )
-                
-                # Wait for both to complete
-                vision_result = vision_future.result()
-                system_prompt = prompt_future.result()
+                    schema=schema_content,
+                ),
+            )
+            print(f"[Process] vision_generate_markdown completed in {int((time.time() - vision_wait_start) * 1000)}ms")
+            print(f"[Process] generate_system_prompt completed in 0ms")
             
             markdown_content = vision_result.get("markdown_content")
             structure_hints = vision_result.get("structure_hints")
 
             # Extract Fields from Markdown (prompt already generated)
+            extract_start = time.time()
             extraction_result = extract_fields_balanced(
                 schema_content=schema_content,
                 system_prompt=system_prompt,
@@ -421,14 +471,18 @@ async def process_document(
                 document_type=doc_type,
                 structure_hints=structure_hints,
             )
+            print(f"[Process] extract_fields_balanced completed in {int((time.time() - extract_start) * 1000)}ms")
         else:
             # Basic Text extraction
+            print(f"[Process] Running workflow='basic' doc_type='{doc_type}' (text extraction)")
+            extract_start = time.time()
             extraction_result = extract_fields_basic(
                 document=router_doc,
                 metadata=doc_metadata,
                 schema_content=schema_content,
                 document_type=doc_type
             )
+            print(f"[Process] extract_fields_basic completed in {int((time.time() - extract_start) * 1000)}ms")
 
         # 6. Log extraction result to Supabase (backend logging)
         processing_duration_ms = int((time.time() - start_time) * 1000)
@@ -495,6 +549,7 @@ async def process_document(
         # Cleanup temp schema file
         if temp_schema_path and os.path.exists(temp_schema_path):
             os.unlink(temp_schema_path)
+        print(f"[Process] END filename='{file.filename}' duration_ms={int((time.time() - start_time) * 1000)}")
 
 # Semaphore for batch processing concurrency control
 BATCH_SEMAPHORE = asyncio.Semaphore(5)
@@ -556,23 +611,25 @@ async def _process_single_file(
             is_image = suffix_lower in [".png", ".jpg", ".jpeg"]
             
             if is_pdf or is_txt or is_docx:
-                if is_pdf:
-                    loader = PDFPlumberLoader(tmp_path)
-                elif is_txt:
-                    loader = TextLoader(tmp_path, encoding="utf-8")
-                else:
-                    loader = Docx2txtLoader(tmp_path)
-                
-                docs = loader.load()
-                if not docs:
-                    return None, {"filename": file.filename, "error": "Could not extract text from document"}, None
-                
-                full_text = "\n".join([d.page_content for d in docs])
+                try:
+                    full_text, page_count = await asyncio.to_thread(
+                        _load_file_content, 
+                        tmp_path, 
+                        is_pdf, 
+                        is_txt, 
+                        is_docx
+                    )
+                except ValueError as e:
+                     return None, {"filename": file.filename, "error": str(e)}, None
+                except Exception as e:
+                     return None, {"filename": file.filename, "error": f"Failed to load document: {str(e)}"}, None
+
                 router_doc = Document(page_content=full_text, metadata={"source": file.filename})
             
             elif is_image:
                 router_doc = Document(page_content="", metadata={"source": file.filename})
-                docs = []  # For page_count later
+                # images don't need text loading for router yet (vision step handles it)
+                page_count = 1
             else:
                 return None, {"filename": file.filename, "error": f"Unsupported file type: {suffix}"}, None
             
@@ -583,6 +640,16 @@ async def _process_single_file(
                 workflow_name = shared_context.workflow_name
                 schema_content = shared_context.schema_content
                 system_prompt = shared_context.system_prompt
+                
+                # Image files MUST use balanced (vision) workflow regardless of shared context
+                if is_image:
+                    workflow_name = "balanced"
+
+                # .txt files MUST use basic workflow regardless of shared context
+                # (mirrors router.py behavior which forces basic for .txt sources)
+                if is_txt:
+                    workflow_name = "basic"
+
             else:
                 # Leader or standalone: compute values
                 if is_image:
@@ -592,6 +659,10 @@ async def _process_single_file(
                     route = route_document(router_doc, schema_id=schema_id)
                     doc_type = route.get("document_type", "generic")
                     workflow_name = route.get("workflow", "basic")
+
+                # .txt files should always use basic workflow
+                if is_txt:
+                    workflow_name = "basic"
                 
                 # Override with explicit document_type if provided
                 if document_type:
@@ -620,9 +691,9 @@ async def _process_single_file(
             
             # Run extraction
             from core_pipeline import DocumentMetadata
-            from extractors.extract_fields_basic import extract_fields_basic
-            from extractors.extract_fields_balanced import extract_fields_balanced
-            from extractors.vision_generate_markdown import vision_generate_markdown
+            from processors.extract_fields_basic import extract_fields_basic
+            from processors.extract_fields_balanced import extract_fields_balanced
+            from processors.vision_generate_markdown import vision_generate_markdown
             
             doc_metadata = DocumentMetadata(
                 document_number="api-batch",
@@ -703,7 +774,7 @@ async def _process_single_file(
             extraction_result["source_file"] = file.filename
             
             op_metadata = {
-                "page_count": len(docs) if is_pdf else 1,
+                "page_count": page_count,
                 "doc_type": doc_type,
                 "workflow": workflow_name,
                 "source": "api_batch"
@@ -718,6 +789,9 @@ async def _process_single_file(
             ), None, result_shared_context
             
         except Exception as e:
+            print(f"[Error] Processing {file.filename} failed: {e}")
+            import traceback
+            traceback.print_exc()
             if tenant_id:
                 processing_duration_ms = int((time.time() - start_time) * 1000)
                 _log_extraction_result(
@@ -807,76 +881,133 @@ async def process_batch(
         reserved_pages = total_pages
 
     try:
-        # Step 1: Process LEADER (first file) to determine doc_type and generate system_prompt
-        leader_file = files[0]
-        print(f"[Batch] Processing leader file: {leader_file.filename}")
-        
-        leader_response, leader_error, shared_context = await _process_single_file(
-            file=leader_file,
-            batch_id=batch_id,
-            authorization=authorization,
-            shared_context=None,  # Leader computes its own
-            schema_id=schema_id,
-            schema_content_from_request=schema_content_from_request,
-            document_type=document_type,
-            is_leader=True,
-        )
-        
-        if leader_response:
-            successful_results.append(leader_response)
-        if leader_error:
-            errors.append(leader_error)
-        
-        # Step 2: Process FOLLOWERS in parallel using shared context from leader
-        if len(files) > 1 and shared_context:
-            print(f"[Batch] Processing {len(files) - 1} follower files with shared context (doc_type='{shared_context.doc_type}')")
-            
+        # Optimistic Parallelism: If schema_id is provided, we can skip the Leader step
+        # because we know the doc_type and can fetch the schema/prompt upfront.
+        optimistic_context = None
+        if schema_id:
+            print(f"[Batch] Optimistic Mode: Checking schema {schema_id}")
+            schema_details = get_schema_details(schema_id)
+            if schema_details and schema_details.get("content"):
+                
+                # Determine doc_type (prefer explicit > schema > generic)
+                opt_doc_type = document_type or schema_details.get("document_type") or "generic"
+                opt_schema_content = schema_details.get("content")
+                
+                # Generate system prompt once
+                from utils.prompt_generator import generate_system_prompt
+                opt_system_prompt = generate_system_prompt(document_type=opt_doc_type, schema=opt_schema_content)
+                
+                optimistic_context = BatchSharedContext(
+                    doc_type=opt_doc_type,
+                    # User requested default to 'balanced' (vision) for safety with scanned docs
+                    workflow_name="balanced", 
+                    schema_content=opt_schema_content,
+                    system_prompt=opt_system_prompt
+                )
+                print(f"[Batch] Optimistic Mode: ACTIVATED for {len(files)} files (type='{opt_doc_type}')")
+
+        if optimistic_context:
+            # OPTIMISTIC PATH: Launch all files in parallel immediately
             follower_tasks = [
                 _process_single_file(
                     file=f,
                     batch_id=batch_id,
                     authorization=authorization,
-                    shared_context=shared_context,  # Reuse leader's computed values
+                    shared_context=optimistic_context,
                     schema_id=schema_id,
-                    is_leader=False,
+                    is_leader=False
                 )
-                for f in files[1:]
+                for f in files
             ]
             
-            # Process followers concurrently with semaphore limiting to 5
-            follower_results = await asyncio.gather(*follower_tasks)
-            
-            for response, error, _ in follower_results:
+            results = await asyncio.gather(*follower_tasks)
+            for response, error, _ in results:
                 if response:
                     successful_results.append(response)
                 if error:
                     errors.append(error)
+
+        else:
+            # FALLBACK PATH (Leader-Follower): Process first file to discovery type
+            # Step 1: Process LEADER (first file) to determine doc_type and generate system_prompt
+            leader_idx = 0
+            for idx, f in enumerate(files):
+                if not f.filename.lower().endswith(".txt"):
+                    leader_idx = idx
+                    break
+
+            leader_file = files[leader_idx]
+            print(f"[Batch] Processing leader file: {leader_file.filename}")
+            
+            leader_response, leader_error, shared_context = await _process_single_file(
+                file=leader_file,
+                batch_id=batch_id,
+                authorization=authorization,
+                shared_context=None,  # Leader computes its own
+                schema_id=schema_id,
+                schema_content_from_request=schema_content_from_request,
+                document_type=document_type,
+                is_leader=True,
+            )
+            
+            if leader_response:
+                successful_results.append(leader_response)
+            if leader_error:
+                errors.append(leader_error)
+            
+            # Step 2: Process FOLLOWERS in parallel using shared context from leader
+            follower_files = [f for i, f in enumerate(files) if i != leader_idx]
+
+            if len(follower_files) > 0 and shared_context:
+                print(f"[Batch] Processing {len(follower_files)} follower files with shared context (doc_type='{shared_context.doc_type}')")
+                
+                follower_tasks = [
+                    _process_single_file(
+                        file=f,
+                        batch_id=batch_id,
+                        authorization=authorization,
+                        shared_context=shared_context,  # Reuse leader's computed values
+                        schema_id=schema_id,
+                        is_leader=False,
+                    )
+                    for f in follower_files
+                ]
+                
+                # Process followers concurrently with semaphore limiting to 5
+                follower_results = await asyncio.gather(*follower_tasks)
+                
+                for response, error, _ in follower_results:
+                    if response:
+                        successful_results.append(response)
+                    if error:
+                        errors.append(error)
         
-        elif len(files) > 1 and not shared_context:
-            # Leader failed to produce shared context, process followers independently
-            print(f"[Batch] Leader failed, processing {len(files) - 1} followers independently")
-            
-            follower_tasks = [
-                _process_single_file(
-                    file=f,
-                    batch_id=batch_id,
-                    authorization=authorization,
-                    shared_context=None,
-                    schema_id=schema_id,
-                    schema_content_from_request=schema_content_from_request,
-                    document_type=document_type,
-                    is_leader=False,
-                )
-                for f in files[1:]
-            ]
-            
-            follower_results = await asyncio.gather(*follower_tasks)
-            
-            for response, error, _ in follower_results:
-                if response:
-                    successful_results.append(response)
-                if error:
-                    errors.append(error)
+            elif len(follower_files) > 0 and not shared_context:
+                # Leader failed to produce shared context, process followers independently
+                print(f"[Batch] Leader failed, processing {len(follower_files)} followers independently")
+                
+                follower_tasks = [
+                    _process_single_file(
+                        file=f,
+                        batch_id=batch_id,
+                        authorization=authorization,
+                        shared_context=None,
+                        schema_id=schema_id,
+                        schema_content_from_request=schema_content_from_request,
+                        document_type=document_type,
+                        is_leader=False,
+                    )
+                    for f in follower_files
+                ]
+                
+                # Process followers concurrently with semaphore limiting to 5
+                follower_results = await asyncio.gather(*follower_tasks)
+                
+                for response, error, _ in follower_results:
+                    if response:
+                        successful_results.append(response)
+                    if error:
+                        errors.append(error)
 
         return BatchProcessResponse(
             status="completed" if not errors else "partial" if successful_results else "failed",
@@ -908,6 +1039,64 @@ async def process_batch(
                     authorization=authorization,
                     max_pages=MAX_PAGES_PER_MONTH,
                 )
+
+
+@app.delete("/schemas/{schema_id}")
+async def delete_schema_endpoint(
+    schema_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Delete a schema and its corresponding prompt cache entry.
+    Requires authentication.
+    """
+    user_id = _get_user_id_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+        
+    from utils.supabase_schemas import get_schema_details, delete_schema
+    from utils.prompt_generator import calculate_prompt_cache_key, delete_prompt_from_cache
+    
+    # 1. Fetch schema details to calculate cache key
+    schema_details = get_schema_details(schema_id)
+    if not schema_details:
+        raise HTTPException(status_code=404, detail="Schema not found")
+        
+    schema_content = schema_details.get("content")
+    document_type = schema_details.get("document_type")
+    
+    # 2. Calculate cache key if content and doc_type exist
+    cache_key = None
+    if schema_content and document_type:
+        # Needs to match the logic in generate_system_prompt
+        # If content relies on "document_type" from the schema JSON itself, prioritize that
+        # But supabase_schemas.py seems to return the row's document_type column too
+        
+        # Ensure schema_content is a dict
+        if isinstance(schema_content, str):
+            try:
+                schema_content = json.loads(schema_content)
+            except:
+                pass
+                
+        if isinstance(schema_content, dict):
+             cache_key, _ = calculate_prompt_cache_key(document_type, schema_content)
+    
+    # 3. Delete Schema
+    deleted = delete_schema(schema_id)
+    if not deleted:
+        raise HTTPException(status_code=500, detail="Failed to delete schema")
+        
+    # 4. Delete Prompt Cache (if key was calculated)
+    prompt_deleted = False
+    if cache_key:
+        prompt_deleted = delete_prompt_from_cache(cache_key)
+        
+    return {
+        "status": "success", 
+        "schema_id": schema_id, 
+        "prompt_cache_deleted": prompt_deleted
+    }
 
 
 if __name__ == "__main__":

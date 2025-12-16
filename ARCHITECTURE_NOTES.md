@@ -53,12 +53,10 @@ The router is implemented as `route_document(document, schema_id=None)` in `rout
    - If Supabase returns a non-empty `document_type`, that value is treated as the **authoritative** type for this run and overrides any `document_type` proposed by the LLM.
    - If Supabase does **not** have a `document_type` yet, the LLM’s inferred `document_type` is used for the run; if it is not `"generic"`, it is also written back to Supabase via `update_schema_document_type` so future runs use that stored type.
 
-2. **File-extension heuristic (fast path for .txt)**
-   - If the source filename (from `document.metadata["source"]`) ends with `.txt` **and** no `document_type` was found on the schema:
-     - Immediately returns:
-       - `workflow = "basic"`
-       - `document_type = "generic"`
-     - Skips caching and LLM calls for simple plain-text inputs.
+2. **File-extension heuristic (workflow override for .txt)**
+   - If the source filename (from `document.metadata["source"]`) ends with `.txt`:
+     - The router will force the final `workflow` to `"basic"`.
+     - The router may still infer `document_type` (via cache/LLM) unless short-content optimization triggers.
 
 3. **Normalize content and build snippet**
    - Uses `_normalize_garbage_characters(document.page_content or "")` to clean up text.
@@ -108,7 +106,7 @@ In `WORKFLOW_REGISTRY`, the **balanced** entry conceptually contains three steps
 
 ### `vision_generate_markdown`
 
-Implemented in `extractors/vision_generate_markdown.py` as:
+Implemented in `processors/vision_generate_markdown.py` as:
 
 `vision_generate_markdown(document, metadata, schema_content) -> Dict[str, Any]`
 
@@ -221,7 +219,7 @@ Implemented in `utils/prompt_generator.py` as:
 
 ### `extract_fields_balanced`
 
-Implemented in `extractors/extract_fields_balanced.py` as:
+Implemented in `processors/extract_fields_balanced.py` as:
 
 `extract_fields_balanced(document, metadata, schema_content, markdown_content=None, document_type="generic", structure_hints=None) -> Dict[str, Any]`
 
@@ -298,7 +296,7 @@ Implemented in `extractors/extract_fields_balanced.py` as:
 - Workflow contains only `extract_fields_basic`.
 - No vision step; simpler text-only path.
 
-Implemented in `extractors/extract_fields_basic.py` as:
+Implemented in `processors/extract_fields_basic.py` as:
 
 `extract_fields_basic(document, metadata, schema_content, document_type="generic") -> Dict[str, Any]`
 
@@ -345,12 +343,58 @@ Implemented in `extractors/extract_fields_basic.py` as:
 - `generate_system_prompt(document_type, schema)`:
   - First call for a `(document_type, schema)` pair:
     - Calls LLM.  
-    - Saves the resulting `system_prompt` in `.cache/`.
+    - Saves the resulting `system_prompt` to the Supabase `prompt_cache` table (when configured).
   - Subsequent calls for the same pair:
     - No LLM call.  
-    - System prompt is reused from `.cache`.
+    - System prompt is reused from the Supabase `prompt_cache` table.
 
 - We can warm this cache ahead of time for standard templates via `utils/warm_prompt_cache.py` so first-time users don’t pay the LLM cost for prompt generation on those schemas.
+
+---
+
+## 9. Batch processing modes (`/process-batch`)
+
+The batch endpoint (`POST /process-batch` in `main.py`) supports two high-level modes for determining `document_type` and choosing a workflow.
+
+### 9.1 Optimistic Mode (schema-based)
+
+Optimistic Mode activates when a `schema_id` is provided and the backend can fetch schema details upfront (including schema `content`). In this mode, the system does not need a leader document to determine type.
+
+- **`document_type` source**:
+  - Derived from the schema record in Supabase (`schemas.document_type`) when present.
+  - If `schemas.document_type` is missing, the system falls back to leader-follower behavior.
+
+- **Prompt behavior**:
+  - `generate_system_prompt(document_type, schema_content)` is called once.
+  - It first checks the Supabase `prompt_cache` table.
+  - If no cached entry exists for that `(document_type, schema_hash)` combination, the prompt is generated and then written to `prompt_cache`.
+
+- **Default workflow behavior**:
+  - The shared context defaults to `workflow_name = "balanced"` (vision-first default).
+  - Per-file overrides apply:
+    - **Images (`.png/.jpg/.jpeg`)**: always forced to `balanced`.
+    - **Text files (`.txt`)**: forced to `basic` (mirrors router behavior).
+
+- **Parallelism**:
+  - Files are processed concurrently but limited by `BATCH_SEMAPHORE` (currently 5).
+
+### 9.2 Leader–Follower Mode (router-based)
+
+Leader–Follower Mode is used when the schema does not provide a reliable `document_type` upfront.
+
+- **Leader**:
+  - Runs the router (`route_document`) to determine `document_type` and a suggested workflow.
+  - Router call behavior:
+    - Uses router cache when available.
+    - If content is extremely short, returns `document_type = "generic"` without calling the LLM.
+    - Otherwise may call the LLM router to infer `document_type`.
+  - A single `system_prompt` is generated once for the leader (`generate_system_prompt`) and reused for followers.
+
+- **Followers**:
+  - Reuse the leader’s `document_type`, schema, and prompt (router is not re-run for each follower).
+  - Per-file overrides apply:
+    - **Images (`.png/.jpg/.jpeg`)**: always forced to `balanced`.
+    - **Text files (`.txt`)**: forced to `basic`.
 
 ---
 

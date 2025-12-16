@@ -50,8 +50,6 @@ def _load_schema(schema_path: Path) -> Dict[str, Any]:
         return json.load(f)
 
 
-from utils.cache_manager import generate_cache_key, get_cached_result, save_to_cache, EXTRACTION_CACHE_DIR
-
 def extract_fields_balanced(
     schema_content: Dict[str, Any],
     system_prompt: str,
@@ -64,27 +62,7 @@ def extract_fields_balanced(
     Uses markdown_content from vision step for extraction.
     """
     
-    # Check Cache
-    # We cache based on markdown content, schema, and hints.
     schema = schema_content
-    
-    cache_key = generate_cache_key(
-        content=markdown_content,
-        extra_params={
-            "step": "extract_fields_balanced",
-            "schema": schema,
-            "doc_type": document_type,
-            "hints": structure_hints
-        }
-    )
-    
-    cached = get_cached_result(cache_key, cache_dir=EXTRACTION_CACHE_DIR)
-    if cached:
-        # Check if cached result is empty (might be from a previous failed run)
-        if not any(v is not None for v in cached.values()):
-            pass
-        else:
-            return cached
 
     # Generate the Pydantic model dynamically based on the loaded schema
     fields: List[Dict[str, Any]] = schema.get("fields", [])
@@ -140,9 +118,5 @@ def extract_fields_balanced(
     )
     
     result = model.model_dump()
-    
-    # Only cache non-empty results to avoid persisting failures
-    if result and any(v is not None for v in result.values()):
-        save_to_cache(cache_key, result, cache_dir=EXTRACTION_CACHE_DIR)
 
     return result
