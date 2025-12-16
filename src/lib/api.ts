@@ -46,27 +46,9 @@ export async function uploadDocumentsBatch(
     formData.append('files', file)
   }
 
-  // If schema ID is provided, fetch the schema content and send it
+  // If schema ID is provided, send it; backend will fetch the schema content and document_type.
   if (schemaId) {
     formData.append('schema_id', schemaId)
-
-    const { data: schema, error } = await supabase
-      .from('schemas')
-      .select('content, document_type')
-      .eq('id', schemaId)
-      .single()
-
-    if (error) {
-      throw new Error('Failed to fetch schema')
-    }
-
-    if (schema && schema.content) {
-      formData.append('schema_content_from_request', JSON.stringify(schema.content))
-    }
-
-    if (schema && schema.document_type) {
-      formData.append('document_type', schema.document_type)
-    }
   }
 
   const response = await fetch(`${API_URL}/process-batch`, {

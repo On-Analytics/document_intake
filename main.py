@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import date
+from contextlib import contextmanager
 
 import pdfplumber
 
@@ -55,6 +56,15 @@ class BatchProcessResponse(BaseModel):
 
 MAX_PAGES_PER_BATCH = 20
 MAX_PAGES_PER_MONTH = 200
+
+
+@contextmanager
+def _stage_timer(timings_ms: Dict[str, int], name: str):
+    start = time.time()
+    try:
+        yield
+    finally:
+        timings_ms[name] = int((time.time() - start) * 1000)
 
 
 def _count_upload_pages(file: UploadFile) -> int:
@@ -589,6 +599,8 @@ async def _process_single_file(
     """
     async with BATCH_SEMAPHORE:
         start_time = time.time()
+        timings_ms: Dict[str, int] = {}
+        request_id = f"{batch_id}:{file.filename}"
         tenant_id = _get_tenant_id_from_token(authorization)
         user_token = authorization.split(" ")[1] if authorization and authorization.startswith("Bearer ") else None
         
@@ -598,10 +610,11 @@ async def _process_single_file(
         
         try:
             # Save to temp file
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                content = await file.read()
-                tmp.write(content)
-                tmp_path = tmp.name
+            with _stage_timer(timings_ms, "upload_read_and_temp_write"):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    content = await file.read()
+                    tmp.write(content)
+                    tmp_path = tmp.name
             
             # Check file extension
             suffix_lower = suffix.lower()
@@ -612,13 +625,14 @@ async def _process_single_file(
             
             if is_pdf or is_txt or is_docx:
                 try:
-                    full_text, page_count = await asyncio.to_thread(
-                        _load_file_content, 
-                        tmp_path, 
-                        is_pdf, 
-                        is_txt, 
-                        is_docx
-                    )
+                    with _stage_timer(timings_ms, "loader_text_extraction"):
+                        full_text, page_count = await asyncio.to_thread(
+                            _load_file_content,
+                            tmp_path,
+                            is_pdf,
+                            is_txt,
+                            is_docx,
+                        )
                 except ValueError as e:
                      return None, {"filename": file.filename, "error": str(e)}, None
                 except Exception as e:
@@ -656,7 +670,8 @@ async def _process_single_file(
                     doc_type = "generic"
                     workflow_name = "balanced"
                 else:
-                    route = route_document(router_doc, schema_id=schema_id)
+                    with _stage_timer(timings_ms, "router"):
+                        route = route_document(router_doc, schema_id=schema_id)
                     doc_type = route.get("document_type", "generic")
                     workflow_name = route.get("workflow", "basic")
 
@@ -671,7 +686,8 @@ async def _process_single_file(
                 # Load schema
                 schema_content = None
                 if schema_id:
-                    schema_content = get_schema_content(schema_id)
+                    with _stage_timer(timings_ms, "schema_fetch"):
+                        schema_content = get_schema_content(schema_id)
                 
                 if not schema_content and schema_content_from_request:
                     try:
@@ -687,7 +703,8 @@ async def _process_single_file(
                 if is_leader:
                     from utils.prompt_generator import generate_system_prompt
                     print(f"[Batch Leader] Generating system prompt for doc_type='{doc_type}' (workflow={workflow_name})")
-                    system_prompt = generate_system_prompt(document_type=doc_type, schema=schema_content)
+                    with _stage_timer(timings_ms, "prompt_generate"):
+                        system_prompt = generate_system_prompt(document_type=doc_type, schema=schema_content)
             
             # Run extraction
             from core_pipeline import DocumentMetadata
@@ -707,40 +724,46 @@ async def _process_single_file(
             
             if workflow_name == "balanced":
                 # Vision processing (unique per document)
-                vision_result = vision_generate_markdown(
-                    document=router_doc,
-                    metadata=doc_metadata,
-                    schema_content=schema_content
-                )
+                with _stage_timer(timings_ms, "vision_generate_markdown"):
+                    vision_result = await asyncio.to_thread(
+                        vision_generate_markdown,
+                        document=router_doc,
+                        metadata=doc_metadata,
+                        schema_content=schema_content,
+                    )
                 
                 # Use pre-computed prompt or generate if not available
                 if not system_prompt:
                     from utils.prompt_generator import generate_system_prompt
-                    system_prompt = generate_system_prompt(document_type=doc_type, schema=schema_content)
+                    with _stage_timer(timings_ms, "prompt_generate"):
+                        system_prompt = generate_system_prompt(document_type=doc_type, schema=schema_content)
                 
                 markdown_content = vision_result.get("markdown_content")
                 structure_hints = vision_result.get("structure_hints")
                 
-                extraction_result = extract_fields_balanced(
-                    schema_content=schema_content,
-                    system_prompt=system_prompt,
-                    markdown_content=markdown_content,
-                    document_type=doc_type,
-                    structure_hints=structure_hints,
-                )
+                with _stage_timer(timings_ms, "extract_fields_balanced"):
+                    extraction_result = extract_fields_balanced(
+                        schema_content=schema_content,
+                        system_prompt=system_prompt,
+                        markdown_content=markdown_content,
+                        document_type=doc_type,
+                        structure_hints=structure_hints,
+                    )
             else:
                 # Use pre-computed prompt or generate if not available
                 if not system_prompt:
                     from utils.prompt_generator import generate_system_prompt
-                    system_prompt = generate_system_prompt(document_type=doc_type, schema=schema_content)
+                    with _stage_timer(timings_ms, "prompt_generate"):
+                        system_prompt = generate_system_prompt(document_type=doc_type, schema=schema_content)
                 
-                extraction_result = extract_fields_basic(
-                    document=router_doc,
-                    metadata=doc_metadata,
-                    schema_content=schema_content,
-                    document_type=doc_type,
-                    system_prompt=system_prompt,
-                )
+                with _stage_timer(timings_ms, "extract_fields_basic"):
+                    extraction_result = extract_fields_basic(
+                        document=router_doc,
+                        metadata=doc_metadata,
+                        schema_content=schema_content,
+                        document_type=doc_type,
+                        system_prompt=system_prompt,
+                    )
             
             # Build shared context for leader to return
             result_shared_context = None
@@ -758,18 +781,19 @@ async def _process_single_file(
             schema_name = schema_content.get("document_type") or schema_content.get("name") if schema_content else None
             
             if tenant_id:
-                _log_extraction_result(
-                    tenant_id=tenant_id,
-                    filename=file.filename,
-                    schema_id=schema_id,
-                    schema_name=schema_name,
-                    field_count=field_count,
-                    processing_duration_ms=processing_duration_ms,
-                    workflow=workflow_name,
-                    status="completed",
-                    batch_id=batch_id,
-                    user_token=user_token,
-                )
+                with _stage_timer(timings_ms, "supabase_log_result"):
+                    _log_extraction_result(
+                        tenant_id=tenant_id,
+                        filename=file.filename,
+                        schema_id=schema_id,
+                        schema_name=schema_name,
+                        field_count=field_count,
+                        processing_duration_ms=processing_duration_ms,
+                        workflow=workflow_name,
+                        status="completed",
+                        batch_id=batch_id,
+                        user_token=user_token,
+                    )
             
             extraction_result["source_file"] = file.filename
             
@@ -777,8 +801,15 @@ async def _process_single_file(
                 "page_count": page_count,
                 "doc_type": doc_type,
                 "workflow": workflow_name,
-                "source": "api_batch"
+                "source": "api_batch",
+                "request_id": request_id,
+                "timings_ms": timings_ms,
             }
+
+            timings_ms["total_file_ms"] = int((time.time() - start_time) * 1000)
+            print(
+                f"[BatchFile] END request_id='{request_id}' total_ms={timings_ms['total_file_ms']} timings_ms={timings_ms}"
+            )
             
             return ProcessResponse(
                 status="success",
