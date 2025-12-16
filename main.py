@@ -597,9 +597,12 @@ async def _process_single_file(
     Leader document (is_leader=True): Determines doc_type, generates system_prompt, returns shared_context.
     Follower documents: Use pre-computed shared_context from leader.
     """
-    async with BATCH_SEMAPHORE:
+    semaphore_wait_start = time.time()
+    await BATCH_SEMAPHORE.acquire()
+    semaphore_wait_ms = int((time.time() - semaphore_wait_start) * 1000)
+    try:
         start_time = time.time()
-        timings_ms: Dict[str, int] = {}
+        timings_ms: Dict[str, int] = {"semaphore_wait_ms": semaphore_wait_ms}
         request_id = f"{batch_id}:{file.filename}"
         tenant_id = _get_tenant_id_from_token(authorization)
         user_token = authorization.split(" ")[1] if authorization and authorization.startswith("Bearer ") else None
@@ -745,7 +748,8 @@ async def _process_single_file(
                 structure_hints = vision_result.get("structure_hints")
                 
                 with _stage_timer(timings_ms, "extract_fields_balanced"):
-                    extraction_result = extract_fields_balanced(
+                    extraction_result = await asyncio.to_thread(
+                        extract_fields_balanced,
                         schema_content=schema_content,
                         system_prompt=system_prompt,
                         markdown_content=markdown_content,
@@ -760,7 +764,8 @@ async def _process_single_file(
                         system_prompt = generate_system_prompt(document_type=doc_type, schema=schema_content)
                 
                 with _stage_timer(timings_ms, "extract_fields_basic"):
-                    extraction_result = extract_fields_basic(
+                    extraction_result = await asyncio.to_thread(
+                        extract_fields_basic,
                         document=router_doc,
                         metadata=doc_metadata,
                         schema_content=schema_content,
@@ -785,7 +790,8 @@ async def _process_single_file(
             
             if tenant_id:
                 with _stage_timer(timings_ms, "supabase_log_result"):
-                    _log_extraction_result(
+                    await asyncio.to_thread(
+                        _log_extraction_result,
                         tenant_id=tenant_id,
                         filename=file.filename,
                         schema_id=schema_id,
@@ -849,6 +855,9 @@ async def _process_single_file(
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
+
+    finally:
+        BATCH_SEMAPHORE.release()
 
 
 @app.post("/process-batch", response_model=BatchProcessResponse)
