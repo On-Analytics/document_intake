@@ -731,6 +731,9 @@ async def _process_single_file(
                         metadata=doc_metadata,
                         schema_content=schema_content,
                     )
+                vision_timings_ms = None
+                if isinstance(vision_result, dict):
+                    vision_timings_ms = vision_result.get("vision_timings_ms")
                 
                 # Use pre-computed prompt or generate if not available
                 if not system_prompt:
@@ -805,6 +808,9 @@ async def _process_single_file(
                 "request_id": request_id,
                 "timings_ms": timings_ms,
             }
+
+            if workflow_name == "balanced" and 'vision_timings_ms' in locals() and vision_timings_ms:
+                op_metadata["vision_timings_ms"] = vision_timings_ms
 
             timings_ms["total_file_ms"] = int((time.time() - start_time) * 1000)
             print(

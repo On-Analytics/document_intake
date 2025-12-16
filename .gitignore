@@ -28,8 +28,6 @@ dist/
 
 # Cache directories (stored in Supabase or ephemeral)
 .cache/
-.vision_cache/
-.extraction_cache/
 .router_cache/
 
 # Templates (managed in Supabase schemas table)

@@ -7,8 +7,6 @@ from typing import Any, Dict, Optional, Union
 # Define cache directories
 CACHE_DIR = Path(__file__).parent.parent / ".cache"  # Prompts only
 ROUTER_CACHE_DIR = Path(__file__).parent.parent / ".router_cache"
-VISION_CACHE_DIR = Path(__file__).parent.parent / ".vision_cache"  # Vision/markdown results
-EXTRACTION_CACHE_DIR = Path(__file__).parent.parent / ".extraction_cache"  # Extraction results
 
 def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)

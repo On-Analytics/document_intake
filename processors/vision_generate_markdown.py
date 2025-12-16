@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import os
 import base64
+import time
 
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -99,16 +100,22 @@ def vision_generate_markdown(
         "4. Preserve all key information values exactly as they appear.\n"
     )
 
+    timings_ms: Dict[str, int] = {}
+
     images = []
     # Handle PDF conversion
     if metadata.file_path and metadata.file_path.lower().endswith(".pdf"):
+        t0 = time.time()
         images = convert_pdf_to_images(metadata.file_path)
+        timings_ms["pdf_to_images"] = int((time.time() - t0) * 1000)
     # Handle Image files directly
     elif metadata.file_path and metadata.file_path.lower().endswith((".png", ".jpg", ".jpeg")):
         try:
+            t0 = time.time()
             with open(metadata.file_path, "rb") as image_file:
                 encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
                 images = [encoded_string]
+            timings_ms["image_read_base64"] = int((time.time() - t0) * 1000)
         except Exception:
             images = []
 
@@ -145,10 +152,12 @@ def vision_generate_markdown(
         # No images available (not a PDF or conversion failed)
         return {"markdown_content": "", "structure_hints": {}}
 
+    t0 = time.time()
     model = llm.invoke(
         messages,
         config={"run_name": "vision_generate_markdown"},
     )
+    timings_ms["llm_invoke"] = int((time.time() - t0) * 1000)
 
     # Analyze the generated markdown for structural hints
     markdown_content = model.markdown_content
@@ -158,5 +167,8 @@ def vision_generate_markdown(
         "markdown_content": markdown_content,
         "structure_hints": structure_hints
     }
+
+    if timings_ms:
+        result["vision_timings_ms"] = timings_ms
 
     return result

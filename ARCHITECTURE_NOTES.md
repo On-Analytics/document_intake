@@ -132,12 +132,7 @@ Implemented in `processors/vision_generate_markdown.py` as:
       - `section_count: int`
 
 - **Caching behavior**:
-  - Builds a cache key using `generate_cache_key` with:
-    - `file_path = str(metadata.file_path)`
-    - `extra_params = {"step": "vision_generate_markdown", "model": VISION_MODEL}`
-      - `VISION_MODEL` defaults to `"gpt-4o-mini"` (via env var `VISION_MODEL`).
-  - Looks up this key in `VISION_CACHE_DIR` via `get_cached_result`.
-  - If present, **returns the cached `{markdown_content, structure_hints}` immediately** and skips any model calls.
+  - Local filesystem caching is currently disabled for this step.
 
 - **Vision vs non-vision path**:
   - If `metadata.file_path` ends with `.pdf`:
@@ -162,11 +157,10 @@ Implemented in `processors/vision_generate_markdown.py` as:
     - `temperature = 0`.
     - `.with_structured_output(MarkdownOutput, method="function_calling")` to parse into the `MarkdownOutput` pydantic model.
 
-- **Post-processing and cache write**:
+- **Post-processing**:
   - Extracts `markdown_content` from the model output.
   - Runs `_analyze_markdown_structure(markdown_content)` to compute `structure_hints` (tables, sections, simple layout cues).
-  - Packs both into a result dict and saves it to `VISION_CACHE_DIR` via `save_to_cache(cache_key, result, cache_dir=VISION_CACHE_DIR)`.
-  - Returns the same result to the caller.
+  - Returns the result to the caller.
 
 ### `prompt_generator`
 
@@ -256,14 +250,7 @@ Implemented in `processors/extract_fields_balanced.py` as:
 - **Content selection and caching**:
   - Chooses `content_to_use`:
     - `markdown_content` if provided, else `document.page_content or ""`.
-  - Builds a cache key using `generate_cache_key` with:
-    - `content = content_to_use`.
-    - `extra_params = {"step": "extract_fields_balanced", "schema": schema_content, "doc_type": document_type, "hints": structure_hints}`.
-  - Checks `EXTRACTION_CACHE_DIR` via `get_cached_result`.
-  - If cached result exists and has at least one non-`None` value:
-    - Returns it immediately (skips LLM).
-  - If cached result exists but all values are `None`:
-    - Treats it as a failed/empty extraction and continues to recompute.
+  - Local filesystem caching is currently disabled for this step.
 
 - **Prompt construction**:
   - Builds a human-readable **fields block** summarizing each schema field: `- name (type): description`.
@@ -284,9 +271,7 @@ Implemented in `processors/extract_fields_balanced.py` as:
   - Sends the system prompt from `generate_system_prompt` and the constructed user prompt.
   - Receives a typed Pydantic instance and converts it to a `dict` via `model.model_dump()`.
 
-- **Post-processing and cache write**:
-  - If the result dict is non-empty and any value is not `None`:
-    - Saves it to `EXTRACTION_CACHE_DIR` with the same cache key.
+- **Post-processing**:
   - Returns the result dict to the caller.
 
 ---
@@ -317,10 +302,7 @@ Implemented in `processors/extract_fields_basic.py` as:
 
 - **Behavior and caching**:
   - Normalizes `document.page_content` via `_normalize_garbage_characters`.
-  - Builds a cache key with `generate_cache_key` using:
-    - `content = normalized_text`.
-    - `extra_params = {"step": "extract_fields_basic", "schema": schema_content, "doc_type": document_type}`.
-  - Checks `EXTRACTION_CACHE_DIR` with `get_cached_result` and returns any cached result immediately.
+  - Local filesystem caching is currently disabled for this step.
   - Builds a dynamic Pydantic model from `schema_content.fields` via `_create_dynamic_model`.
   - Generates a **system prompt** using `generate_system_prompt(document_type, schema_content)` (shared with balanced workflow).
   - Constructs a user prompt containing:
@@ -329,7 +311,6 @@ Implemented in `processors/extract_fields_basic.py` as:
     - Human-readable description of each schema field.
     - The full normalized text content between separators.
   - Uses `ChatOpenAI(model="gpt-4o-mini", temperature=0)` with `.with_structured_output(DynamicModel, method="function_calling")` to produce a typed result.
-  - Dumps the model to a dict and saves it to `EXTRACTION_CACHE_DIR` via `save_to_cache`.
   - Returns the result dict.
 
 - **Shared prompt generation**:
@@ -462,11 +443,10 @@ This section ties together the components above into a single, end-to-end flow f
 
 6. **Vision markdown generation** (`vision_generate_markdown`)
    - Inputs: `document`, `metadata`, `schema_content`.
-   - Checks vision cache (`VISION_CACHE_DIR`) via `generate_cache_key` on `file_path` + model.
-   - If cache miss and file is PDF/image, converts pages to images and calls the vision model to produce:
+   - If file is PDF/image, converts pages to images and calls the vision model to produce:
      - `markdown_content` (rich markdown representation).
      - `structure_hints` (tables, sections, layout cues).
-   - Saves result to `VISION_CACHE_DIR` and returns it.
+   - Returns the result.
 
 7. **Prompt generation** (`generate_system_prompt`)
    - Inputs: `document_type`, `schema_content`.
@@ -479,12 +459,11 @@ This section ties together the components above into a single, end-to-end flow f
      - `markdown_content`, `structure_hints` from the vision step.
      - `document_type` and `system_prompt` from the router/prompt generator.
    - Selects `content_to_use = markdown_content` (or raw text fallback).
-   - Checks extraction cache (`EXTRACTION_CACHE_DIR`) keyed by content + schema + doc_type + hints.
    - Dynamically builds a Pydantic model from `schema_content.fields`.
    - Calls the extraction LLM (`EXTRACTION_MODEL`, default `gpt-4o-mini`) with:
      - `system_prompt` from `generate_system_prompt`.
      - A user prompt containing schema descriptions, structural hints, and document content.
-   - Returns a typed dict of extracted fields and caches non-empty results.
+   - Returns a typed dict of extracted fields.
 
 ### 8.4 Basic workflow path
 
@@ -495,12 +474,11 @@ This section ties together the components above into a single, end-to-end flow f
     - Inputs:
       - `document`, `metadata`, `schema_content`, `document_type`.
     - Normalizes raw text with `_normalize_garbage_characters`.
-    - Checks extraction cache (`EXTRACTION_CACHE_DIR`) keyed by content + schema + doc_type.
     - Builds a dynamic Pydantic model from `schema_content.fields`.
     - Calls `ChatOpenAI(model="gpt-4o-mini")` with:
       - System prompt from `generate_system_prompt`.
       - User prompt containing schema descriptions and full normalized text.
-    - Returns and caches the typed dict result.
+    - Returns the typed dict result.
 
 ### 8.5 Outputs and logging
 
