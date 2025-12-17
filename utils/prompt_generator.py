@@ -13,18 +13,26 @@ class SystemPromptOutput(BaseModel):
     system_prompt: str = Field(..., description="The generated system prompt for the extraction task.")
 
 
-def _get_supabase_headers() -> Dict[str, str]:
+def _get_supabase_headers(user_token: Optional[str] = None) -> Dict[str, str]:
     """Get Supabase API headers."""
     supabase_key = os.getenv("VITE_SUPABASE_ANON_KEY", "")
+    auth_token = user_token if user_token else supabase_key
     return {
         "apikey": supabase_key,
-        "Authorization": f"Bearer {supabase_key}",
+        "Authorization": f"Bearer {auth_token}",
         "Content-Type": "application/json",
         "Prefer": "return=representation",
     }
 
 
-def _get_cached_prompt_from_supabase(cache_key: str) -> Optional[str]:
+def _get_cached_prompt_from_supabase(
+    *,
+    cache_key: str,
+    tenant_id: Optional[str] = None,
+    schema_id: Optional[str] = None,
+    schema_content_hash: Optional[str] = None,
+    user_token: Optional[str] = None,
+) -> Optional[str]:
     """Fetch cached prompt from Supabase prompt_cache table."""
     try:
         import requests
@@ -33,9 +41,24 @@ def _get_cached_prompt_from_supabase(cache_key: str) -> Optional[str]:
             return None
         
         url = f"{supabase_url.rstrip('/')}/rest/v1/prompt_cache"
-        params = {"cache_key": f"eq.{cache_key}", "select": "system_prompt"}
+
+        params: Dict[str, str] = {
+            "select": "system_prompt,created_at",
+            "order": "created_at.desc",
+            "limit": "1",
+        }
+
+        if schema_id and schema_content_hash:
+            if tenant_id:
+                params["tenant_id"] = f"eq.{tenant_id}"
+            else:
+                params["tenant_id"] = "is.null"
+            params["schema_id"] = f"eq.{schema_id}"
+            params["schema_content_hash"] = f"eq.{schema_content_hash}"
+        else:
+            params["cache_key"] = f"eq.{cache_key}"
         
-        resp = requests.get(url, headers=_get_supabase_headers(), params=params, timeout=5)
+        resp = requests.get(url, headers=_get_supabase_headers(user_token), params=params, timeout=5)
         resp.raise_for_status()
         data = resp.json()
         
@@ -46,7 +69,17 @@ def _get_cached_prompt_from_supabase(cache_key: str) -> Optional[str]:
         return None
 
 
-def _save_prompt_to_supabase(cache_key: str, document_type: str, schema_hash: str, system_prompt: str) -> bool:
+def _save_prompt_to_supabase(
+    *,
+    cache_key: str,
+    document_type: str,
+    schema_hash: str,
+    schema_content_hash: str,
+    system_prompt: str,
+    tenant_id: Optional[str] = None,
+    schema_id: Optional[str] = None,
+    user_token: Optional[str] = None,
+) -> bool:
     """Save generated prompt to Supabase prompt_cache table."""
     try:
         import requests
@@ -55,18 +88,26 @@ def _save_prompt_to_supabase(cache_key: str, document_type: str, schema_hash: st
             return False
         
         url = f"{supabase_url.rstrip('/')}/rest/v1/prompt_cache"
-        payload = {
+
+        payload: Dict[str, Any] = {
             "cache_key": cache_key,
             "document_type": document_type,
             "schema_hash": schema_hash,
+            "schema_content_hash": schema_content_hash,
             "system_prompt": system_prompt,
         }
+
+        if tenant_id:
+            payload["tenant_id"] = tenant_id
+        if schema_id:
+            payload["schema_id"] = schema_id
         
-        resp = requests.post(url, headers=_get_supabase_headers(), json=payload, timeout=5)
+        resp = requests.post(url, headers=_get_supabase_headers(user_token), json=payload, timeout=5)
+        if resp.status_code == 409:
+            return True
+
         resp.raise_for_status()
         return True
-    except Exception:
-        return False
     except Exception:
         return False
 
@@ -132,6 +173,9 @@ def calculate_prompt_cache_key(document_type: str, schema: Dict[str, Any]) -> tu
 def generate_system_prompt(
     document_type: str, 
     schema: Dict[str, Any],
+    tenant_id: Optional[str] = None,
+    schema_id: Optional[str] = None,
+    user_token: Optional[str] = None,
 ) -> str:
     """
     Generates a specialized system prompt for extracting data from a specific document type
@@ -141,9 +185,16 @@ def generate_system_prompt(
     """
     
     cache_key, schema_hash = calculate_prompt_cache_key(document_type, schema)
+    schema_content_hash = schema_hash
     
     # Check Supabase cache first (persistent across deployments)
-    cached_prompt = _get_cached_prompt_from_supabase(cache_key)
+    cached_prompt = _get_cached_prompt_from_supabase(
+        cache_key=cache_key,
+        tenant_id=tenant_id,
+        schema_id=schema_id,
+        schema_content_hash=schema_content_hash,
+        user_token=user_token,
+    )
     if cached_prompt:
         print(f"[Prompt Generator] Using cached prompt from Supabase for '{document_type}'")
         return cached_prompt
@@ -196,7 +247,16 @@ def generate_system_prompt(
         )
         
         # Save to Supabase cache for persistence
-        saved = _save_prompt_to_supabase(cache_key, document_type, schema_hash, result.system_prompt)
+        saved = _save_prompt_to_supabase(
+            cache_key=cache_key,
+            document_type=document_type,
+            schema_hash=schema_hash,
+            schema_content_hash=schema_content_hash,
+            system_prompt=result.system_prompt,
+            tenant_id=tenant_id,
+            schema_id=schema_id,
+            user_token=user_token,
+        )
         if saved:
             print(f"[Prompt Generator] Saved prompt to Supabase cache for '{document_type}'")
         else:

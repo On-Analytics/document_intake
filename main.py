@@ -162,6 +162,24 @@ def _get_tenant_id_from_token(auth_header: Optional[str]) -> Optional[str]:
         return None
 
 
+def _get_prompt_cache_tenant_id(*, schema_id: Optional[str], tenant_id: Optional[str]) -> Optional[str]:
+    if not schema_id:
+        return tenant_id
+
+    try:
+        details = get_schema_details(schema_id)
+        if not details:
+            return tenant_id
+
+        schema_tenant_id = details.get("tenant_id")
+        if schema_tenant_id is None:
+            return None
+
+        return tenant_id
+    except Exception:
+        return tenant_id
+
+
 def _get_user_id_from_token(auth_header: Optional[str]) -> Optional[str]:
     """Extract Supabase auth user id from JWT token via Supabase."""
     if not auth_header or not auth_header.startswith("Bearer "):
@@ -839,7 +857,13 @@ async def _process_single_file(
                     from utils.prompt_generator import generate_system_prompt
                     print(f"[Batch Leader] Generating system prompt for doc_type='{doc_type}' (workflow={workflow_name})")
                     with _stage_timer(timings_ms, "prompt_generate"):
-                        system_prompt = generate_system_prompt(document_type=doc_type, schema=schema_content)
+                        system_prompt = generate_system_prompt(
+                            document_type=doc_type,
+                            schema=schema_content,
+                            tenant_id=_get_prompt_cache_tenant_id(schema_id=schema_id, tenant_id=tenant_id),
+                            schema_id=schema_id,
+                            user_token=user_token,
+                        )
             
             # Run extraction
             from core_pipeline import DocumentMetadata
@@ -874,7 +898,13 @@ async def _process_single_file(
                 if not system_prompt:
                     from utils.prompt_generator import generate_system_prompt
                     with _stage_timer(timings_ms, "prompt_generate"):
-                        system_prompt = generate_system_prompt(document_type=doc_type, schema=schema_content)
+                        system_prompt = generate_system_prompt(
+                            document_type=doc_type,
+                            schema=schema_content,
+                            tenant_id=_get_prompt_cache_tenant_id(schema_id=schema_id, tenant_id=tenant_id),
+                            schema_id=schema_id,
+                            user_token=user_token,
+                        )
                 
                 markdown_content = vision_result.get("markdown_content")
                 structure_hints = vision_result.get("structure_hints")
@@ -893,7 +923,12 @@ async def _process_single_file(
                 if not system_prompt:
                     from utils.prompt_generator import generate_system_prompt
                     with _stage_timer(timings_ms, "prompt_generate"):
-                        system_prompt = generate_system_prompt(document_type=doc_type, schema=schema_content)
+                        system_prompt = generate_system_prompt(
+                            document_type=doc_type,
+                            schema=schema_content,
+                            tenant_id=tenant_id,
+                            schema_id=schema_id,
+                        )
                 
                 with _stage_timer(timings_ms, "extract_fields_basic"):
                     extraction_result = await asyncio.to_thread(
@@ -1039,6 +1074,9 @@ async def process_batch(
     then remaining files process in parallel using the pre-computed values.
     """
     batch_id = str(uuid.uuid4())
+
+    tenant_id = _get_tenant_id_from_token(authorization)
+    user_token = authorization.split(" ")[1] if authorization and authorization.startswith("Bearer ") else None
     
     successful_results = []
     errors = []
@@ -1106,7 +1144,13 @@ async def process_batch(
                 
                 # Generate system prompt once
                 from utils.prompt_generator import generate_system_prompt
-                opt_system_prompt = generate_system_prompt(document_type=opt_doc_type, schema=opt_schema_content)
+                opt_system_prompt = generate_system_prompt(
+                    document_type=opt_doc_type,
+                    schema=opt_schema_content,
+                    tenant_id=_get_prompt_cache_tenant_id(schema_id=schema_id, tenant_id=tenant_id),
+                    schema_id=schema_id,
+                    user_token=user_token,
+                )
                 
                 optimistic_context = BatchSharedContext(
                     doc_type=opt_doc_type,

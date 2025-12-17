@@ -71,12 +71,18 @@ def get_schema_details(schema_id: str) -> Optional[Dict[str, Any]]:
             "Authorization": f"Bearer {supabase_key}",
         }
         
-        resp = requests.get(url, headers=headers, params={"select": "id,document_type,content"}, timeout=5)
+        resp = requests.get(
+            url,
+            headers=headers,
+            params={"select": "id,tenant_id,is_public,document_type,content"},
+            timeout=5,
+        )
         if resp.ok:
             data = resp.json()
             if data:
                 return data[0]
         return None
+    
     except Exception as e:
         print(f"[Schema] Exception fetching schema details: {e}")
         return None
