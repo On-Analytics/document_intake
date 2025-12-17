@@ -133,6 +133,76 @@ export default function History() {
     URL.revokeObjectURL(url)
   }
 
+  const downloadSingleCSV = (result: ExtractionResult) => {
+    const stored = loadedResults.get(result.id)
+    if (!stored?.results) {
+      alert('Result is not loaded yet')
+      return
+    }
+
+    const baseFields = {
+      filename: result.filename,
+      schema_name: result.schema_name || '',
+      processing_duration_ms: result.processing_duration_ms || '',
+      workflow: result.workflow || '',
+      created_at: result.created_at
+    }
+
+    const resultFields = stored.results || {}
+    const allFieldNames = new Set<string>([...Object.keys(baseFields), ...Object.keys(resultFields)])
+    const headers = Array.from(allFieldNames)
+
+    const row: any = { ...baseFields }
+    Object.entries(resultFields).forEach(([key, value]) => {
+      row[key] = typeof value === 'object' ? JSON.stringify(value) : String(value)
+    })
+
+    const csvRow = headers.map(h => {
+      const value = row[h] ?? ''
+      return `"${String(value).replace(/"/g, '""')}"`
+    }).join(',')
+
+    const csvContent = [headers.join(','), csvRow].join('\n')
+
+    const dataBlob = new Blob([csvContent], { type: 'text/csv' })
+    const url = URL.createObjectURL(dataBlob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${result.filename.replace(/\.[^/.]+$/, '')}_extraction.csv`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
+
+  const downloadSingleJSON = (result: ExtractionResult) => {
+    const stored = loadedResults.get(result.id)
+    if (!stored) {
+      alert('Result is not loaded yet')
+      return
+    }
+
+    const single = {
+      filename: result.filename,
+      schema_name: result.schema_name,
+      processing_duration_ms: result.processing_duration_ms,
+      workflow: result.workflow,
+      created_at: result.created_at,
+      extracted_data: stored.results
+    }
+
+    const dataStr = JSON.stringify(single, null, 2)
+    const dataBlob = new Blob([dataStr], { type: 'application/json' })
+    const url = URL.createObjectURL(dataBlob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${result.filename.replace(/\.[^/.]+$/, '')}_extraction.json`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
+
   const downloadAllCSV = () => {
     if (!results || results.length === 0) {
       alert('No results to download')
@@ -252,6 +322,7 @@ export default function History() {
               {results.map((result) => {
                 const isExpanded = expandedResults.has(result.id)
                 const isSuccess = result.status === 'completed'
+                const canDownloadSingle = isSuccess && loadedResults.has(result.id)
 
                 return (
                   <div
@@ -311,6 +382,28 @@ export default function History() {
                         </div>
 
                         <div className="flex items-center gap-3">
+                          {canDownloadSingle && (
+                            <>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  downloadSingleJSON(result)
+                                }}
+                                className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-dark bg-primary hover:bg-primary/90 rounded-lg transition-all"
+                              >
+                                JSON
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  downloadSingleCSV(result)
+                                }}
+                                className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-white bg-green-600 hover:bg-green-700 rounded-lg transition-all"
+                              >
+                                CSV
+                              </button>
+                            </>
+                          )}
                           {isExpanded ? (
                             <ChevronDown className="h-6 w-6 text-gray-400" />
                           ) : (

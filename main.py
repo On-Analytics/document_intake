@@ -248,6 +248,7 @@ def _adjust_monthly_usage_pages(
 def _log_extraction_result(
     tenant_id: str,
     filename: str,
+    document_id: Optional[str],
     schema_id: Optional[str],
     schema_name: Optional[str],
     field_count: int,
@@ -278,6 +279,7 @@ def _log_extraction_result(
         
         payload = {
             "tenant_id": tenant_id,
+            "document_id": document_id,
             "filename": filename,
             "schema_id": schema_id if schema_id and schema_id not in ["inline-schema", "auto-schema"] else None,
             "schema_name": schema_name,
@@ -296,6 +298,116 @@ def _log_extraction_result(
             timeout=5
         )
         return resp.status_code in [200, 201]
+    except Exception:
+        return False
+
+
+def _create_document_row(
+    *,
+    tenant_id: str,
+    filename: str,
+    file_size: Optional[int],
+    page_count: Optional[int] = None,
+    status: str,
+    metadata: Optional[Dict[str, Any]] = None,
+    user_token: Optional[str] = None,
+) -> Optional[str]:
+    try:
+        import requests
+
+        supabase_url = os.getenv("VITE_SUPABASE_URL")
+        supabase_key = os.getenv("VITE_SUPABASE_ANON_KEY")
+        if not supabase_url or not supabase_key:
+            return None
+
+        auth_token = user_token if user_token else supabase_key
+
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {auth_token}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        }
+
+        payload = {
+            "tenant_id": tenant_id,
+            "filename": filename,
+            "status": status,
+            "file_size": file_size,
+            "page_count": page_count,
+            "metadata": metadata or {},
+        }
+
+        resp = requests.post(
+            f"{supabase_url}/rest/v1/documents",
+            headers=headers,
+            json=payload,
+            timeout=5,
+        )
+        if resp.status_code not in [200, 201]:
+            print(
+                f"[Supabase] Failed to create documents row: status={resp.status_code} body={resp.text[:500]}"
+            )
+            return None
+
+        data = resp.json()
+        if isinstance(data, list) and data:
+            return data[0].get("id")
+        if isinstance(data, dict):
+            return data.get("id")
+        return None
+    except Exception:
+        return None
+
+
+def _update_document_row(
+    *,
+    document_id: str,
+    status: Optional[str] = None,
+    page_count: Optional[int] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    user_token: Optional[str] = None,
+) -> bool:
+    try:
+        import requests
+
+        supabase_url = os.getenv("VITE_SUPABASE_URL")
+        supabase_key = os.getenv("VITE_SUPABASE_ANON_KEY")
+        if not supabase_url or not supabase_key:
+            return False
+
+        auth_token = user_token if user_token else supabase_key
+
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {auth_token}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        }
+
+        payload: Dict[str, Any] = {}
+        if status is not None:
+            payload["status"] = status
+        if page_count is not None:
+            payload["page_count"] = page_count
+        if metadata is not None:
+            payload["metadata"] = metadata
+
+        if not payload:
+            return True
+
+        resp = requests.patch(
+            f"{supabase_url}/rest/v1/documents?id=eq.{document_id}",
+            headers=headers,
+            json=payload,
+            timeout=5,
+        )
+        ok = resp.status_code in [200, 204]
+        if not ok:
+            print(
+                f"[Supabase] Failed to update documents row id={document_id}: status={resp.status_code} body={resp.text[:500]}"
+            )
+        return ok
     except Exception:
         return False
 
@@ -503,6 +615,7 @@ async def process_document(
             _log_extraction_result(
                 tenant_id=tenant_id,
                 filename=file.filename,
+                document_id=None,
                 schema_id=schema_id,
                 schema_name=schema_name,
                 field_count=field_count,
@@ -540,6 +653,7 @@ async def process_document(
             _log_extraction_result(
                 tenant_id=tenant_id,
                 filename=file.filename,
+                document_id=None,
                 schema_id=schema_id,
                 schema_name=None,
                 field_count=0,
@@ -610,6 +724,7 @@ async def _process_single_file(
         suffix = Path(file.filename).suffix
         tmp_path = None
         workflow_name = "unknown"
+        document_row_id: Optional[str] = None
         
         try:
             # Save to temp file
@@ -618,6 +733,23 @@ async def _process_single_file(
                     content = await file.read()
                     tmp.write(content)
                     tmp_path = tmp.name
+
+            if tenant_id and tmp_path:
+                with _stage_timer(timings_ms, "supabase_document_create"):
+                    document_row_id = await asyncio.to_thread(
+                        _create_document_row,
+                        tenant_id=tenant_id,
+                        filename=file.filename,
+                        file_size=os.path.getsize(tmp_path),
+                        page_count=None,
+                        status="processing",
+                        metadata={
+                            "batch_id": batch_id,
+                            "request_id": request_id,
+                            "source": "api_batch",
+                        },
+                        user_token=user_token,
+                    )
             
             # Check file extension
             suffix_lower = suffix.lower()
@@ -789,11 +921,30 @@ async def _process_single_file(
             schema_name = schema_content.get("document_type") or schema_content.get("name") if schema_content else None
             
             if tenant_id:
+                if document_row_id:
+                    with _stage_timer(timings_ms, "supabase_document_update"):
+                        await asyncio.to_thread(
+                            _update_document_row,
+                            document_id=document_row_id,
+                            status="completed",
+                            page_count=page_count,
+                            metadata={
+                                "batch_id": batch_id,
+                                "request_id": request_id,
+                                "source": "api_batch",
+                                "page_count": page_count,
+                                "doc_type": doc_type,
+                                "workflow": workflow_name,
+                                "timings_ms": timings_ms,
+                            },
+                            user_token=user_token,
+                        )
                 with _stage_timer(timings_ms, "supabase_log_result"):
                     await asyncio.to_thread(
                         _log_extraction_result,
                         tenant_id=tenant_id,
                         filename=file.filename,
+                        document_id=document_row_id,
                         schema_id=schema_id,
                         schema_name=schema_name,
                         field_count=field_count,
@@ -825,7 +976,7 @@ async def _process_single_file(
             
             return ProcessResponse(
                 status="success",
-                document_id="no-persistence",
+                document_id=document_row_id or "no-persistence",
                 results=extraction_result,
                 operational_metadata=op_metadata,
                 batch_id=batch_id
@@ -837,9 +988,23 @@ async def _process_single_file(
             traceback.print_exc()
             if tenant_id:
                 processing_duration_ms = int((time.time() - start_time) * 1000)
+                if document_row_id:
+                    _update_document_row(
+                        document_id=document_row_id,
+                        status="failed",
+                        page_count=page_count if 'page_count' in locals() else None,
+                        metadata={
+                            "batch_id": batch_id,
+                            "request_id": request_id,
+                            "source": "api_batch",
+                            "error_message": str(e)[:500],
+                        },
+                        user_token=user_token,
+                    )
                 _log_extraction_result(
                     tenant_id=tenant_id,
                     filename=file.filename,
+                    document_id=document_row_id,
                     schema_id=schema_id,
                     schema_name=None,
                     field_count=0,

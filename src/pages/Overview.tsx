@@ -1,13 +1,15 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { FileText, Zap, TrendingUp, CheckCircle2, ChevronRight, Sparkles } from 'lucide-react'
+import { BookOpen, FileText, Files, Zap, TrendingUp, CheckCircle2, ChevronRight, Sparkles } from 'lucide-react'
 
 export default function Overview() {
   const navigate = useNavigate()
+  const [timeRange, setTimeRange] = useState<'month' | 'lifetime'>('month')
 
   const { data: stats } = useQuery({
-    queryKey: ['overview-stats'],
+    queryKey: ['overview-stats', timeRange],
     queryFn: async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return null
@@ -20,15 +22,43 @@ export default function Overview() {
 
       if (!profile) return null
 
-      const { data: extractions } = await supabase
+      const periodStart = new Date()
+      periodStart.setUTCDate(1)
+      periodStart.setUTCHours(0, 0, 0, 0)
+
+      const createdAtFilterIso = periodStart.toISOString()
+
+      const extractionsQuery = supabase
         .from('extraction_results')
         .select('id, status')
         .eq('tenant_id', profile.tenant_id)
+
+      const { data: extractions } = timeRange === 'month'
+        ? await extractionsQuery.gte('created_at', createdAtFilterIso)
+        : await extractionsQuery
 
       const { data: schemas } = await supabase
         .from('schemas')
         .select('id')
         .or(`tenant_id.eq.${profile.tenant_id},is_public.eq.true`)
+
+      const documentsCountQuery = supabase
+        .from('documents')
+        .select('id', { count: 'exact', head: true })
+        .eq('tenant_id', profile.tenant_id)
+
+      const { count: documentsCount } = timeRange === 'month'
+        ? await documentsCountQuery.gte('created_at', createdAtFilterIso)
+        : await documentsCountQuery
+
+      const documentsPagesQuery = supabase
+        .from('documents')
+        .select('page_count')
+        .eq('tenant_id', profile.tenant_id)
+
+      const { data: documentPagesInRange } = timeRange === 'month'
+        ? await documentsPagesQuery.gte('created_at', createdAtFilterIso)
+        : await documentsPagesQuery
 
       const total = extractions?.length || 0
       const successful = extractions?.filter(e => e.status === 'completed').length || 0
@@ -37,6 +67,8 @@ export default function Overview() {
 
       return {
         totalExtractions: total,
+        totalDocuments: documentsCount || 0,
+        totalPages: documentPagesInRange?.reduce((acc, d) => acc + (d.page_count || 0), 0) || 0,
         successful,
         failed,
         successRate,
@@ -51,17 +83,33 @@ export default function Overview() {
     <div className="flex flex-col min-h-screen">
       {/* Page Header */}
       <div className="px-6 lg:px-8 pt-6 pb-4">
-        <h1 className="text-2xl font-bold text-dark">Overview</h1>
-        <p className="text-sm text-gray-600 mt-1">Track your document extraction activity and performance</p>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-dark">Overview</h1>
+            <p className="text-sm text-gray-600 mt-1">Track your document extraction activity and performance</p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-600">Timeframe</label>
+            <select
+              value={timeRange}
+              onChange={(e) => setTimeRange(e.target.value as 'month' | 'lifetime')}
+              className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white"
+            >
+              <option value="month">This month</option>
+              <option value="lifetime">Lifetime</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       {/* Page Content */}
       <div className="flex-1 px-6 lg:px-8 pb-8">
         <div className="max-w-7xl mx-auto space-y-6">
 
-          {stats && stats.totalExtractions > 0 ? (
+          {stats && (stats.totalExtractions > 0 || stats.totalDocuments > 0 || stats.totalPages > 0) ? (
             <>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
                 <div className="bg-white rounded-xl p-5 border border-gray-200 hover:border-primary/30 transition-all">
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 bg-primary/10 rounded-lg flex items-center justify-center">
@@ -70,6 +118,30 @@ export default function Overview() {
                     <div>
                       <p className="text-2xl font-bold text-dark">{stats.totalExtractions}</p>
                       <p className="text-xs text-gray-600">Total Extractions</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-xl p-5 border border-gray-200 hover:border-blue-300 transition-all">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 bg-blue-50 rounded-lg flex items-center justify-center">
+                      <Files className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold text-dark">{stats.totalDocuments}</p>
+                      <p className="text-xs text-gray-600">Total Documents</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-xl p-5 border border-gray-200 hover:border-indigo-300 transition-all">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 bg-indigo-50 rounded-lg flex items-center justify-center">
+                      <BookOpen className="h-5 w-5 text-indigo-600" />
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold text-dark">{stats.totalPages}</p>
+                      <p className="text-xs text-gray-600">Total Pages</p>
                     </div>
                   </div>
                 </div>
