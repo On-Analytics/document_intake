@@ -143,7 +143,6 @@ def _count_upload_pages(file: UploadFile) -> int:
 
 def _load_file_content(tmp_path: str, is_pdf: bool, is_txt: bool, is_docx: bool) -> tuple[str, int]:
     """Synchronous helper to load file content, to be run in a thread. Returns (text, page_count)."""
-    print(f"[Loader] Starting load for {tmp_path} (pdf={is_pdf}, txt={is_txt}, docx={is_docx})")
     try:
         if is_pdf:
             loader = PDFPlumberLoader(tmp_path)
@@ -155,15 +154,12 @@ def _load_file_content(tmp_path: str, is_pdf: bool, is_txt: bool, is_docx: bool)
         
         docs = loader.load()
         if not docs:
-            print(f"[Loader] No documents returned for {tmp_path}")
             raise ValueError("Could not extract text from document")
         
         text = "\n".join([d.page_content for d in docs])
         page_count = len(docs)
-        print(f"[Loader] Successfully loaded {len(text)} chars from {tmp_path} ({page_count} pages)")
         return text, page_count
     except Exception as e:
-        print(f"[Loader] Error loading {tmp_path}: {e}")
         raise
 
 def _get_tenant_id_from_token(auth_header: Optional[str]) -> Optional[str]:
@@ -527,7 +523,7 @@ def _persist_deferred_records(records: list[DeferredPersistenceRecord]) -> None:
                 user_token=r.user_token,
             )
         except Exception as e:
-            print(f"[DeferredPersistence] Failed for filename='{r.filename}': {e}")
+            pass
 
 
 def _create_document_row(
@@ -573,9 +569,6 @@ def _create_document_row(
             timeout=5,
         )
         if resp.status_code not in [200, 201]:
-            print(
-                f"[Supabase] Failed to create documents row: status={resp.status_code} body={resp.text[:500]}"
-            )
             return None
 
         data = resp.json()
@@ -631,10 +624,6 @@ def _update_document_row(
             timeout=5,
         )
         ok = resp.status_code in [200, 204]
-        if not ok:
-            print(
-                f"[Supabase] Failed to update documents row id={document_id}: status={resp.status_code} body={resp.text[:500]}"
-            )
         return ok
     except Exception:
         return False
@@ -660,7 +649,6 @@ async def process_document(
     """
     start_time = time.time()
     tenant_id = _get_tenant_id_from_token(authorization)
-    print(f"[Process] START filename='{file.filename}' schema_id='{schema_id}' document_type='{document_type}' batch_id='{batch_id}'")
 
     raise HTTPException(
         status_code=410,
@@ -679,7 +667,6 @@ async def process_document(
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         shutil.copyfileobj(file.file, tmp)
         tmp_path = tmp.name
-    print(f"[Process] Temp file saved: {tmp_path}")
 
     temp_schema_path = None # Track temp schema file cleanup
 
@@ -695,20 +682,16 @@ async def process_document(
         if is_pdf or is_txt or is_docx:
             # Use appropriate loader based on file type
             if is_pdf:
-                print("[Process] Loading PDF via PDFPlumberLoader")
                 loader = PDFPlumberLoader(tmp_path)
             elif is_txt:
-                print("[Process] Loading TXT via TextLoader")
                 loader = TextLoader(tmp_path, encoding="utf-8")
             else:  # .docx
-                print("[Process] Loading DOCX via Docx2txtLoader")
                 loader = Docx2txtLoader(tmp_path)
 
             load_start = time.time()
             # Loader is synchronous and can block; run it in a thread so we don't
             # stall the event loop under concurrency.
             docs = await asyncio.to_thread(loader.load)
-            print(f"[Process] Document loaded in {int((time.time() - load_start) * 1000)}ms (pages={len(docs) if docs else 0})")
 
             if not docs:
                 raise HTTPException(status_code=400, detail="Could not extract text from document")
@@ -719,10 +702,8 @@ async def process_document(
             router_doc = Document(page_content=full_text, metadata={"source": file.filename})
 
             # 3. Determine Workflow
-            print("[Process] Routing document (LLM may be called if cache miss)")
             route_start = time.time()
             route = route_document(router_doc, schema_id=schema_id)
-            print(f"[Process] Routing complete in {int((time.time() - route_start) * 1000)}ms -> {route}")
             doc_type = route.get("document_type", "generic")
             workflow_name = route.get("workflow", "basic")
 
@@ -744,7 +725,6 @@ async def process_document(
             doc_type = document_type
 
         # 4. Load Schema Content
-        print(f"[Process] Loading schema content (schema_id='{schema_id}', request_schema_provided={bool(schema_content_from_request)})")
         schema_start = time.time()
         schema_content = None
         if schema_id:
@@ -759,8 +739,6 @@ async def process_document(
         
         if not schema_content:
             raise HTTPException(status_code=400, detail="No schema provided. Please select a template or provide schema content.")
-
-        print(f"[Process] Schema loaded in {int((time.time() - schema_start) * 1000)}ms (fields={len(schema_content.get('fields', [])) if isinstance(schema_content, dict) else 'n/a'})")
 
         # Write Schema to Temp File (for any extractors that might need file path)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".json", mode="w", encoding="utf-8") as tmp_schema:
@@ -785,7 +763,6 @@ async def process_document(
         extraction_result = {}
 
         if workflow_name == "balanced":
-            print(f"[Process] Running workflow='balanced' doc_type='{doc_type}' (vision + extraction)")
             # Vision + Text Extraction with Parallel Prompt Generation
             from utils.prompt_generator import generate_system_prompt
             
@@ -806,8 +783,6 @@ async def process_document(
                     schema=schema_content,
                 ),
             )
-            print(f"[Process] vision_generate_markdown completed in {int((time.time() - vision_wait_start) * 1000)}ms")
-            print(f"[Process] generate_system_prompt completed in 0ms")
             
             markdown_content = vision_result.get("markdown_content")
             structure_hints = vision_result.get("structure_hints")
@@ -821,10 +796,8 @@ async def process_document(
                 document_type=doc_type,
                 structure_hints=structure_hints,
             )
-            print(f"[Process] extract_fields_balanced completed in {int((time.time() - extract_start) * 1000)}ms")
         else:
             # Basic Text extraction
-            print(f"[Process] Running workflow='basic' doc_type='{doc_type}' (text extraction)")
             extract_start = time.time()
             extraction_result = extract_fields_basic(
                 document=router_doc,
@@ -832,7 +805,6 @@ async def process_document(
                 schema_content=schema_content,
                 document_type=doc_type
             )
-            print(f"[Process] extract_fields_basic completed in {int((time.time() - extract_start) * 1000)}ms")
 
         # 6. Log extraction result to Supabase (backend logging)
         processing_duration_ms = int((time.time() - start_time) * 1000)
@@ -901,7 +873,6 @@ async def process_document(
         # Cleanup temp schema file
         if temp_schema_path and os.path.exists(temp_schema_path):
             os.unlink(temp_schema_path)
-        print(f"[Process] END filename='{file.filename}' duration_ms={int((time.time() - start_time) * 1000)}")
 
 # Semaphore for batch processing concurrency control
 BATCH_SEMAPHORE = asyncio.Semaphore(5)
@@ -1076,7 +1047,6 @@ async def _process_single_file(
                 system_prompt = None
                 if is_leader:
                     from utils.prompt_generator import generate_system_prompt
-                    print(f"[Batch Leader] Generating system prompt for doc_type='{doc_type}' (workflow={workflow_name})")
                     with _stage_timer(timings_ms, "prompt_generate"):
                         system_prompt = generate_system_prompt(
                             document_type=doc_type,
@@ -1165,7 +1135,8 @@ async def _process_single_file(
             if is_leader:
                 result_shared_context = BatchSharedContext(
                     doc_type=doc_type,
-                    workflow_name=workflow_name,
+                    # User requested default to 'balanced' (vision) for safety with scanned docs
+                    workflow_name="balanced", 
                     schema_content=schema_content,
                     system_prompt=system_prompt,
                 )
@@ -1250,9 +1221,6 @@ async def _process_single_file(
                 op_metadata["vision_timings_ms"] = vision_timings_ms
 
             timings_ms["total_file_ms"] = int((time.time() - start_time) * 1000)
-            print(
-                f"[BatchFile] END request_id='{request_id}' total_ms={timings_ms['total_file_ms']} timings_ms={timings_ms}"
-            )
             
             return ProcessResponse(
                 status="success",
@@ -1263,9 +1231,6 @@ async def _process_single_file(
             ), None, result_shared_context, deferred_record
             
         except Exception as e:
-            print(f"[Error] Processing {file.filename} failed: {e}")
-            import traceback
-            traceback.print_exc()
             if tenant_id:
                 processing_duration_ms = int((time.time() - start_time) * 1000)
                 if defer_persistence:
@@ -1356,7 +1321,6 @@ async def process_batch(
     if not files:
         batch_timings_ms["auth_and_quota_ms"] = int((time.time() - auth_and_quota_start_time) * 1000)
         batch_timings_ms["total_batch_ms"] = int((time.time() - batch_start_time) * 1000)
-        print(f"[Batch] END batch_id='{batch_id}' timings_ms={batch_timings_ms}")
         return BatchProcessResponse(
             status="failed",
             batch_id=batch_id,
@@ -1380,7 +1344,6 @@ async def process_batch(
     if total_pages > MAX_PAGES_PER_BATCH:
         batch_timings_ms["auth_and_quota_ms"] = int((time.time() - auth_and_quota_start_time) * 1000)
         batch_timings_ms["total_batch_ms"] = int((time.time() - batch_start_time) * 1000)
-        print(f"[Batch] END batch_id='{batch_id}' timings_ms={batch_timings_ms}")
         raise HTTPException(
             status_code=413,
             detail=(
@@ -1402,7 +1365,6 @@ async def process_batch(
         if not ok:
             batch_timings_ms["auth_and_quota_ms"] = int((time.time() - auth_and_quota_start_time) * 1000)
             batch_timings_ms["total_batch_ms"] = int((time.time() - batch_start_time) * 1000)
-            print(f"[Batch] END batch_id='{batch_id}' timings_ms={batch_timings_ms}")
             raise HTTPException(
                 status_code=402,
                 detail=f"Monthly quota exceeded. Max {MAX_PAGES_PER_MONTH} pages/month.",
@@ -1417,7 +1379,6 @@ async def process_batch(
         optimistic_context_start_time = time.time()
         optimistic_context = None
         if schema_id:
-            print(f"[Batch] Optimistic Mode: Checking schema {schema_id}")
             schema_details = _get_schema_details_cached(schema_id)
             if schema_details and schema_details.get("content"):
                 
@@ -1441,7 +1402,6 @@ async def process_batch(
                     schema_content=opt_schema_content,
                     system_prompt=opt_system_prompt
                 )
-                print(f"[Batch] Optimistic Mode: ACTIVATED for {len(files)} files (type='{opt_doc_type}')")
 
         batch_timings_ms["optimistic_context_ms"] = int((time.time() - optimistic_context_start_time) * 1000)
 
@@ -1483,7 +1443,6 @@ async def process_batch(
                     break
 
             leader_file = files[leader_idx]
-            print(f"[Batch] Processing leader file: {leader_file.filename}")
             
             leader_response, leader_error, shared_context, deferred_record = await _process_single_file(
                 file=leader_file,
@@ -1511,7 +1470,6 @@ async def process_batch(
             follower_files = [f for i, f in enumerate(files) if i != leader_idx]
 
             if len(follower_files) > 0 and shared_context:
-                print(f"[Batch] Processing {len(follower_files)} follower files with shared context (doc_type='{shared_context.doc_type}')")
                 
                 follower_tasks = [
                     _process_single_file(
@@ -1543,7 +1501,6 @@ async def process_batch(
         
             elif len(follower_files) > 0 and not shared_context:
                 # Leader failed to produce shared context, process followers independently
-                print(f"[Batch] Leader failed, processing {len(follower_files)} followers independently")
                 
                 follower_tasks = [
                     _process_single_file(
@@ -1576,14 +1533,11 @@ async def process_batch(
                         deferred_records.append(deferred_record)
 
         batch_timings_ms["total_batch_ms"] = int((time.time() - batch_start_time) * 1000)
-        print(f"[Batch] END batch_id='{batch_id}' timings_ms={batch_timings_ms}")
 
         if deferred_records and background_tasks is not None:
             background_tasks.add_task(_persist_deferred_records, deferred_records)
         elif deferred_records:
-            print(
-                f"[DeferredPersistence] Skipped scheduling because background_tasks is None (records={len(deferred_records)})"
-            )
+            pass
 
         return BatchProcessResponse(
             status="completed" if not errors else "partial" if successful_results else "failed",

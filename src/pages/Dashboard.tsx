@@ -5,7 +5,7 @@ import { uploadDocumentsBatch } from '../lib/api'
 import Dropzone from '../components/Dropzone'
 import CreateSchemaModal, { SchemaData } from '../components/CreateSchemaModal'
 import SuccessModal from '../components/SuccessModal'
-import { Loader2, Plus, Sparkles, FileText, AlertCircle, Copy, Check, ChevronLeft, ChevronRight, Eye } from 'lucide-react'
+import { Loader2, Plus, Sparkles, FileText, AlertCircle, Copy, Check, ChevronLeft, ChevronRight, Eye, Code } from 'lucide-react'
 import * as pdfjsLib from 'pdfjs-dist'
 
 type FileStatus = 'pending' | 'processing' | 'completed' | 'error'
@@ -29,9 +29,14 @@ export default function Dashboard() {
   const [isCountingPages, setIsCountingPages] = useState(false)
   const [totalSelectedPages, setTotalSelectedPages] = useState<number>(0)
 
+  // Schema Preview State
+  const [isSchemaPreviewOpen, setIsSchemaPreviewOpen] = useState(false)
+
   // Document Preview State
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false)
   const [previewIndex, setPreviewIndex] = useState(0)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [previewText, setPreviewText] = useState<string | null>(null)
 
   // New Template Modal State
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -49,21 +54,47 @@ export default function Dashboard() {
 
   // Generate preview URL when files change
   const currentFile = files[previewIndex]
-  const isPreviewable = useMemo(() => {
+  const isTxtFile = useMemo(() => {
+    if (!currentFile) return false
+    return currentFile.type === 'text/plain' || currentFile.name.toLowerCase().endsWith('.txt')
+  }, [currentFile])
+
+  const isBinaryPreviewable = useMemo(() => {
     if (!currentFile) return false
     const type = currentFile.type
     return type === 'application/pdf' || type.startsWith('image/')
   }, [currentFile])
 
   useEffect(() => {
-    if (currentFile && isPreviewable) {
+    let cancelled = false
+
+    setPreviewText(null)
+
+    if (currentFile && isTxtFile) {
+      currentFile
+        .text()
+        .then((t) => {
+          if (!cancelled) setPreviewText(t)
+        })
+        .catch(() => {
+          if (!cancelled) setPreviewText('Failed to load text preview.')
+        })
+    }
+
+    if (currentFile && isBinaryPreviewable) {
       const url = URL.createObjectURL(currentFile)
       setPreviewUrl(url)
-      return () => URL.revokeObjectURL(url)
-    } else {
-      setPreviewUrl(null)
+      return () => {
+        cancelled = true
+        URL.revokeObjectURL(url)
+      }
     }
-  }, [currentFile, isPreviewable])
+
+    setPreviewUrl(null)
+    return () => {
+      cancelled = true
+    }
+  }, [currentFile, isTxtFile, isBinaryPreviewable])
 
   // Reset preview index when files change
   useEffect(() => {
@@ -140,6 +171,15 @@ export default function Dashboard() {
   }, [files])
 
   const isOverPageLimit = totalSelectedPages > 20
+
+  const extractDisableReason = useMemo(() => {
+    if (status === 'processing') return 'Processing in progress.'
+    if (files.length === 0) return 'Upload at least one file to extract.'
+    if (!selectedSchemaId) return 'Select a template to enable extraction.'
+    if (isCountingPages) return 'Counting pages… please wait.'
+    if (isOverPageLimit) return 'Upload limit exceeded: max 20 pages per batch.'
+    return null
+  }, [status, files.length, selectedSchemaId, isCountingPages, isOverPageLimit])
 
   // Fetch Schemas
   const { data: schemas, refetch: refetchSchemas } = useQuery({
@@ -251,6 +291,11 @@ export default function Dashboard() {
     setIsModalOpen(true)
   }
 
+  const selectedSchema = useMemo(() => {
+    if (!schemas || !selectedSchemaId) return null
+    return schemas.find(s => s.id === selectedSchemaId) ?? null
+  }, [schemas, selectedSchemaId])
+
   const openCloneModal = () => {
     const schema = schemas?.find(s => s.id === selectedSchemaId)
     if (!schema) return
@@ -347,6 +392,30 @@ export default function Dashboard() {
                     </button>
                   )}
                 </div>
+
+                {selectedSchemaId && selectedSchema && (
+                  <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Code className="h-4 w-4 text-gray-400" />
+                        <span className="text-sm font-semibold text-dark">Template Preview</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsSchemaPreviewOpen(v => !v)}
+                        className="text-xs font-medium text-gray-600 hover:text-gray-900 hover:bg-white px-2.5 py-1.5 rounded-lg transition-all"
+                      >
+                        {isSchemaPreviewOpen ? 'Hide' : 'Show'}
+                      </button>
+                    </div>
+
+                    {isSchemaPreviewOpen ? (
+                      <pre className="p-4 overflow-auto max-h-[320px] text-xs font-mono text-gray-800 custom-scrollbar">
+                        {JSON.stringify(selectedSchema.content, null, 2)}
+                      </pre>
+                    ) : null}
+                  </div>
+                )}
               </div>
 
               {/* Step 3: Extract */}
@@ -385,7 +454,7 @@ export default function Dashboard() {
                     )}
                     <button
                       onClick={handleExtract}
-                      disabled={files.length === 0 || status === 'processing' || !selectedSchemaId || isCountingPages || isOverPageLimit}
+                      disabled={!!extractDisableReason}
                       className="flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-dark hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                     >
                       {status === 'processing' ? (
@@ -402,6 +471,12 @@ export default function Dashboard() {
                     </button>
                   </div>
                 </div>
+
+                {extractDisableReason && status === 'idle' && (
+                  <div className={`mt-2 text-xs ${isOverPageLimit ? 'text-red-700' : 'text-gray-600'}`}>
+                    {extractDisableReason}
+                  </div>
+                )}
 
                 {files.length > 0 && isOverPageLimit && status === 'idle' && (
                   <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
@@ -457,68 +532,76 @@ export default function Dashboard() {
                   <Eye className="h-4 w-4 text-gray-400" />
                   <span className="text-sm font-medium text-dark">Document Preview</span>
                 </div>
-                {files.length > 1 && (
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => setPreviewIndex(Math.max(0, previewIndex - 1))}
-                      disabled={previewIndex === 0}
-                      className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                    </button>
-                    <span className="text-xs text-gray-500 min-w-[3rem] text-center">
-                      {previewIndex + 1} / {files.length}
-                    </span>
-                    <button
-                      onClick={() => setPreviewIndex(Math.min(files.length - 1, previewIndex + 1))}
-                      disabled={previewIndex === files.length - 1}
-                      className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </button>
-                  </div>
-                )}
-              </div>
 
-              <div className="h-[700px] bg-gray-50 flex items-center justify-center">
-                {files.length === 0 ? (
-                  <div className="text-center p-6">
-                    <FileText className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-                    <p className="text-sm text-gray-500">Upload a document to preview</p>
-                  </div>
-                ) : previewUrl ? (
-                  currentFile?.type === 'application/pdf' ? (
-                    <iframe
-                      src={previewUrl}
-                      className="w-full h-full"
-                      title="PDF Preview"
-                    />
-                  ) : (
-                    <img
-                      src={previewUrl}
-                      alt={currentFile?.name}
-                      className="max-w-full max-h-full object-contain"
-                    />
-                  )
-                ) : (
-                  <div className="text-center p-6">
-                    <FileText className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-                    <p className="text-sm font-medium text-gray-700 mb-1">{currentFile?.name}</p>
-                    <p className="text-xs text-gray-500">Preview not available for this file type</p>
-                  </div>
-                )}
-              </div>
+                <div className="flex items-center gap-2">
+                  {files.length > 1 && isPreviewOpen && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => setPreviewIndex(Math.max(0, previewIndex - 1))}
+                        disabled={previewIndex === 0}
+                        className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                      <span className="text-xs text-gray-500 min-w-[3rem] text-center">
+                        {previewIndex + 1} / {files.length}
+                      </span>
+                      <button
+                        onClick={() => setPreviewIndex(Math.min(files.length - 1, previewIndex + 1))}
+                        disabled={previewIndex === files.length - 1}
+                        className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
 
-              {currentFile && (
-                <div className="px-4 py-3 border-t border-gray-100 bg-gray-50">
-                  <p className="text-xs text-gray-600 truncate" title={currentFile.name}>
-                    {currentFile.name}
-                  </p>
-                  <p className="text-xs text-gray-400">
-                    {(currentFile.size / 1024).toFixed(1)} KB
-                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setIsPreviewOpen(v => !v)}
+                    className="text-xs font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 px-2.5 py-1.5 rounded-lg transition-all"
+                  >
+                    {isPreviewOpen ? 'Hide' : 'Show'}
+                  </button>
                 </div>
-              )}
+              </div>
+
+              {isPreviewOpen ? (
+                <div className="h-[700px] bg-gray-50 flex items-center justify-center">
+                  {files.length === 0 ? (
+                    <div className="text-center p-6">
+                      <FileText className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+                      <p className="text-sm text-gray-500">Upload a document to preview</p>
+                    </div>
+                  ) : isTxtFile ? (
+                    <div className="w-full h-full p-4">
+                      <pre className="w-full h-full overflow-auto rounded-lg border border-gray-200 bg-white p-4 text-xs font-mono text-gray-800 custom-scrollbar whitespace-pre-wrap">
+                        {previewText ?? 'Loading…'}
+                      </pre>
+                    </div>
+                  ) : previewUrl ? (
+                    currentFile?.type === 'application/pdf' ? (
+                      <iframe
+                        src={previewUrl}
+                        className="w-full h-full"
+                        title="PDF Preview"
+                      />
+                    ) : (
+                      <img
+                        src={previewUrl}
+                        alt={currentFile?.name}
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    )
+                  ) : (
+                    <div className="text-center p-6">
+                      <AlertCircle className="h-12 w-12 text-amber-400 mx-auto mb-3" />
+                      <p className="text-sm text-gray-600">Preview not available for this file type</p>
+                      <p className="text-xs text-gray-500 mt-1">Only PDF, TXT, and images can be previewed</p>
+                    </div>
+                  )}
+                </div>
+              ) : null}
             </div>
           </div>
         </div>

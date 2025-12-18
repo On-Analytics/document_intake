@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useLocation } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
 import { FileText, Calendar, Clock, CheckCircle, AlertCircle, Code, ChevronDown, ChevronRight, FileJson, FileSpreadsheet } from 'lucide-react'
+import { getExtractionResultsForHistory } from '../lib/queries/extraction_results'
 
 interface ExtractionResult {
   id: string
@@ -26,44 +26,23 @@ interface StoredResult {
 export default function History() {
   const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set())
   const [loadedResults, setLoadedResults] = useState<Map<string, StoredResult>>(new Map())
+  const [pageError, setPageError] = useState<string | null>(null)
   const location = useLocation()
   const navBatchId = location.state?.batchId as string | undefined
 
   // Fetch extraction results
-  const { data: results, isLoading } = useQuery({
+  const {
+    data: results,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: ['extraction-results', navBatchId], // Add navBatchId to key to re-fetch on change
     queryFn: async () => {
-      let targetBatchId = navBatchId
-
-      // If no ID passed from navigation, find the latest one
-      if (!targetBatchId) {
-        // 1. Get the latest batch_id
-        const { data: latest } = await supabase
-          .from('extraction_results')
-          .select('batch_id')
-          .not('batch_id', 'is', null) // Filter out legacy records without batch_id
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .single()
-
-        targetBatchId = latest?.batch_id
-      }
-
-      if (!targetBatchId) {
-        // Fallback: If no batched results exist, return empty
-        return []
-      }
-
-      // 2. Fetch results for that batch
-      const { data, error } = await supabase
-        .from('extraction_results')
-        .select('*')
-        .eq('batch_id', targetBatchId)
-        .order('created_at', { ascending: false })
-
-      if (error) throw error
+      const data = await getExtractionResultsForHistory(navBatchId)
       return data as ExtractionResult[]
-    }
+    },
   })
 
   const toggleExpanded = (id: string) => {
@@ -285,7 +264,7 @@ export default function History() {
   return (
     <div className="flex flex-col min-h-screen">
       {/* Page Header */}
-      <div className="px-6 lg:px-8 pt-6 pb-4">
+      <div className="px-6 lg:px-8 pt-5 pb-3">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-dark">Results</h1>
@@ -316,9 +295,37 @@ export default function History() {
       <div className="flex-1 px-6 lg:px-8 pb-8">
         <div className="max-w-7xl mx-auto space-y-4">
 
+          {(pageError || (isError && error)) && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-sm text-red-800">
+                  {pageError || (error as any)?.message || 'Something went wrong.'}
+                </div>
+                <div className="flex items-center gap-2">
+                  {isError && (
+                    <button
+                      type="button"
+                      onClick={() => refetch()}
+                      className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-red-700 border border-red-200 hover:bg-red-50 transition-all"
+                    >
+                      Retry
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPageError(null)}
+                    className="rounded-lg px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 transition-all"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Results List */}
           {results && results.length > 0 ? (
-            <div className="space-y-8">
+            <div className="space-y-3">
               {results.map((result) => {
                 const isExpanded = expandedResults.has(result.id)
                 const isSuccess = result.status === 'completed'
@@ -331,7 +338,7 @@ export default function History() {
                   >
                     {/* Header */}
                     <div
-                      className={`p-8 cursor-pointer ${isSuccess
+                      className={`p-4 cursor-pointer ${isSuccess
                         ? 'bg-green-50/50 border-b border-gray-200'
                         : 'bg-red-50/50 border-b border-gray-200'
                         }`}
@@ -339,12 +346,12 @@ export default function History() {
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-5 flex-1">
-                          <div className={`h-12 w-12 rounded-xl flex items-center justify-center ${isSuccess ? 'bg-green-100' : 'bg-red-100'
+                          <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${isSuccess ? 'bg-green-100' : 'bg-red-100'
                             }`}>
                             {isSuccess ? (
-                              <CheckCircle className="h-6 w-6 text-green-600" />
+                              <CheckCircle className="h-5 w-5 text-green-600" />
                             ) : (
-                              <AlertCircle className="h-6 w-6 text-red-600" />
+                              <AlertCircle className="h-5 w-5 text-red-600" />
                             )}
                           </div>
 
@@ -418,32 +425,32 @@ export default function History() {
                       <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-gray-200">
                         {/* Raw JSON */}
                         <div className="bg-gray-50">
-                          <div className="px-8 py-4 text-sm font-semibold text-gray-700 border-b bg-gray-100 flex items-center gap-2">
+                          <div className="px-4 py-3 text-sm font-semibold text-gray-700 border-b bg-gray-100 flex items-center gap-2">
                             <Code className="h-5 w-5" />
                             JSON Output
                           </div>
-                          <pre className="p-8 overflow-auto max-h-[500px] text-sm font-mono text-gray-800 custom-scrollbar">
+                          <pre className="p-4 overflow-auto max-h-[420px] text-xs font-mono text-gray-800 custom-scrollbar">
                             {JSON.stringify(loadedResults.get(result.id)?.results, null, 2)}
                           </pre>
                         </div>
 
                         {/* Formatted Preview */}
-                        <div className="p-8">
-                          <h4 className="text-lg font-semibold text-dark mb-6 flex items-center gap-2">
-                            <FileText className="h-6 w-6 text-primary" />
+                        <div className="p-4">
+                          <h4 className="text-base font-semibold text-dark mb-4 flex items-center gap-2">
+                            <FileText className="h-5 w-5 text-primary" />
                             Extracted Data
                           </h4>
-                          <dl className="space-y-5">
+                          <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             {loadedResults.get(result.id)?.results && Object.entries(loadedResults.get(result.id)!.results).map(([key, value]) => (
-                              <div key={key} className="pb-5 border-b border-gray-100 last:border-0">
-                                <dt className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                              <div key={key} className="p-3 border border-gray-100 rounded-lg bg-white">
+                                <dt className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
                                   {key.replace(/_/g, ' ')}
                                 </dt>
-                                <dd className="text-sm text-gray-900 bg-gray-50 px-4 py-3 rounded-lg">
+                                <dd className="text-xs text-gray-900 bg-gray-50 px-3 py-2 rounded-md">
                                   {typeof value === 'object' ? (
-                                    <pre className="font-mono text-xs">{JSON.stringify(value, null, 2)}</pre>
+                                    <pre className="font-mono text-[11px] leading-snug">{JSON.stringify(value, null, 2)}</pre>
                                   ) : (
-                                    <span className="font-mono">{String(value)}</span>
+                                    <span className="font-mono text-[12px]">{String(value)}</span>
                                   )}
                                 </dd>
                               </div>

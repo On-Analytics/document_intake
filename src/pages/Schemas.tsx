@@ -1,29 +1,27 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '../lib/supabase'
 import { Plus, Code, FileText, Edit, Eye, Trash2, Copy } from 'lucide-react'
 import CreateSchemaModal, { SchemaData } from '../components/CreateSchemaModal'
 import { deleteSchema } from '../lib/api'
+import { getSchemas } from '../lib/queries/schemas'
 
 export default function Schemas() {
   const queryClient = useQueryClient()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingSchema, setEditingSchema] = useState<any | null>(null)
   const [viewingSchema, setViewingSchema] = useState<any | null>(null)
+  const [pageError, setPageError] = useState<string | null>(null)
 
   // Fetch Schemas with content
-  const { data: schemas } = useQuery({
+  const {
+    data: schemas,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: ['schemas'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('schemas')
-        .select('*')
-        .order('is_public', { ascending: false })
-        .order('name')
-
-      if (error) throw error
-      return data
-    }
+    queryFn: getSchemas,
   })
 
   // Delete Schema Mutation
@@ -35,7 +33,7 @@ export default function Schemas() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['schemas'] })
     },
-    onError: (err: any) => alert(err.message)
+    onError: (err: any) => setPageError(err?.message || 'Failed to delete template')
   })
 
   const handleEdit = (schema: any) => {
@@ -105,6 +103,34 @@ export default function Schemas() {
       <div className="flex-1 px-6 lg:px-8 pb-8">
         <div className="max-w-7xl mx-auto space-y-6">
 
+          {(pageError || (isError && error)) && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-sm text-red-800">
+                  {pageError || (error as any)?.message || 'Something went wrong.'}
+                </div>
+                <div className="flex items-center gap-2">
+                  {isError && (
+                    <button
+                      type="button"
+                      onClick={() => refetch()}
+                      className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-red-700 border border-red-200 hover:bg-red-50 transition-all"
+                    >
+                      Retry
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPageError(null)}
+                    className="rounded-lg px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 transition-all"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* View Schema Modal */}
           {viewingSchema && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in" onClick={() => setViewingSchema(null)}>
@@ -148,7 +174,11 @@ export default function Schemas() {
 
           {/* Templates Grid */}
           <div>
-            {schemas && schemas.length > 0 ? (
+            {isLoading ? (
+              <div className="flex items-center justify-center h-64">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+              </div>
+            ) : schemas && schemas.length > 0 ? (
               <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
                 {schemas.map((schema) => (
                   <div key={schema.id} className="group relative flex flex-col rounded-2xl border border-gray-200 bg-white p-8 hover:border-primary/30 transition-all duration-200">
@@ -166,6 +196,7 @@ export default function Schemas() {
                       ) : (
                         <button
                           onClick={() => handleDelete(schema.id, schema.name)}
+                          disabled={deleteMutation.isPending}
                           className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition-colors"
                           title="Delete template"
                         >

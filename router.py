@@ -166,7 +166,6 @@ def update_schema_document_type(schema_id: str, document_type: str) -> None:
         supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("VITE_SUPABASE_ANON_KEY")
         
         if not supabase_url or not supabase_key:
-            print(f"[Router] Cannot update schema document_type: missing Supabase env vars")
             return
             
         import requests
@@ -178,16 +177,12 @@ def update_schema_document_type(schema_id: str, document_type: str) -> None:
             "Prefer": "return=minimal",
         }
         
-        print(f"[Router] Updating schema {schema_id} with document_type='{document_type}'")
         resp = requests.patch(
             url,
             headers=headers,
             json={"document_type": document_type},
             timeout=5
         )
-        if resp.ok:
-            print(f"[Router] Successfully updated schema document_type")
-        else:
-            print(f"[Router] Failed to update schema document_type: {resp.status_code} - {resp.text}")
-    except Exception as e:
-        print(f"[Router] Exception updating schema document_type: {e}")
+        _ = resp.ok
+    except Exception:
+        return

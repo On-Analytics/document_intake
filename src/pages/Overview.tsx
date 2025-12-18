@@ -1,80 +1,23 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
 import { BookOpen, FileText, Files, Zap, TrendingUp, CheckCircle2, ChevronRight, Sparkles } from 'lucide-react'
+import { getOverviewStats } from '../lib/queries/overview'
 
 export default function Overview() {
   const navigate = useNavigate()
   const [timeRange, setTimeRange] = useState<'month' | 'lifetime'>('month')
+  const [pageError, setPageError] = useState<string | null>(null)
 
-  const { data: stats } = useQuery({
+  const {
+    data: stats,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: ['overview-stats', timeRange],
-    queryFn: async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return null
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('tenant_id')
-        .eq('id', user.id)
-        .single()
-
-      if (!profile) return null
-
-      const periodStart = new Date()
-      periodStart.setUTCDate(1)
-      periodStart.setUTCHours(0, 0, 0, 0)
-
-      const createdAtFilterIso = periodStart.toISOString()
-
-      const extractionsQuery = supabase
-        .from('extraction_results')
-        .select('id, status')
-        .eq('tenant_id', profile.tenant_id)
-
-      const { data: extractions } = timeRange === 'month'
-        ? await extractionsQuery.gte('created_at', createdAtFilterIso)
-        : await extractionsQuery
-
-      const { data: schemas } = await supabase
-        .from('schemas')
-        .select('id')
-        .or(`tenant_id.eq.${profile.tenant_id},is_public.eq.true`)
-
-      const documentsCountQuery = supabase
-        .from('documents')
-        .select('id', { count: 'exact', head: true })
-        .eq('tenant_id', profile.tenant_id)
-
-      const { count: documentsCount } = timeRange === 'month'
-        ? await documentsCountQuery.gte('created_at', createdAtFilterIso)
-        : await documentsCountQuery
-
-      const documentsPagesQuery = supabase
-        .from('documents')
-        .select('page_count')
-        .eq('tenant_id', profile.tenant_id)
-
-      const { data: documentPagesInRange } = timeRange === 'month'
-        ? await documentsPagesQuery.gte('created_at', createdAtFilterIso)
-        : await documentsPagesQuery
-
-      const total = extractions?.length || 0
-      const successful = extractions?.filter(e => e.status === 'completed').length || 0
-      const failed = extractions?.filter(e => e.status === 'failed').length || 0
-      const successRate = total > 0 ? Math.round((successful / total) * 100) : 0
-
-      return {
-        totalExtractions: total,
-        totalDocuments: documentsCount || 0,
-        totalPages: documentPagesInRange?.reduce((acc, d) => acc + (d.page_count || 0), 0) || 0,
-        successful,
-        failed,
-        successRate,
-        totalSchemas: schemas?.length || 0
-      }
-    }
+    queryFn: async () => await getOverviewStats(timeRange),
   })
 
 
@@ -107,7 +50,41 @@ export default function Overview() {
       <div className="flex-1 px-6 lg:px-8 pb-8">
         <div className="max-w-7xl mx-auto space-y-6">
 
-          {stats && (stats.totalExtractions > 0 || stats.totalDocuments > 0 || stats.totalPages > 0) ? (
+          {(pageError || (isError && error)) && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-sm text-red-800">
+                  {pageError || (error as any)?.message || 'Something went wrong.'}
+                </div>
+                <div className="flex items-center gap-2">
+                  {isError && (
+                    <button
+                      type="button"
+                      onClick={() => refetch()}
+                      className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-red-700 border border-red-200 hover:bg-red-50 transition-all"
+                    >
+                      Retry
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPageError(null)}
+                    className="rounded-lg px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 transition-all"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isLoading && (
+            <div className="flex items-center justify-center h-64">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+            </div>
+          )}
+
+          {!isLoading && stats && (stats.totalExtractions > 0 || stats.totalDocuments > 0 || stats.totalPages > 0) ? (
             <>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
                 <div className="bg-white rounded-xl p-5 border border-gray-200 hover:border-primary/30 transition-all">
@@ -205,7 +182,7 @@ export default function Overview() {
                 </button>
               </div>
             </>
-          ) : (
+          ) : !isLoading ? (
             <div className="bg-white rounded-xl border border-gray-200 p-10 text-center">
               <div className="inline-flex items-center justify-center h-14 w-14 bg-gray-50 rounded-full mb-4">
                 <FileText className="h-7 w-7 text-gray-400" />
@@ -223,7 +200,7 @@ export default function Overview() {
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>
-          )}
+          ) : null}
         </div>
       </div>
     </div>
