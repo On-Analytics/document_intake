@@ -346,7 +346,24 @@ export default function Login() {
             </div>
 
             <div className="mt-8 text-center text-xs text-gray-500">
-              By continuing, you agree to our Terms of Service and Privacy Policy
+              By continuing, you agree to our{' '}
+              <a
+                href="/terms_of_service.pdf"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:text-primary-600 underline transition-colors"
+              >
+                Terms of Service
+              </a>
+              {' '}and{' '}
+              <a
+                href="/privacy_policy.pdf"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:text-primary-600 underline transition-colors"
+              >
+                Privacy Policy
+              </a>
             </div>
           </div>
         </div>
