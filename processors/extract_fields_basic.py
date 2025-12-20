@@ -1,10 +1,9 @@
 from typing import Dict, Any, List, Optional, Type
-import json
 from langchain_core.documents import Document
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, create_model, Field
 
-from core_pipeline import BASE_DIR, DocumentMetadata, _normalize_garbage_characters
+from core_pipeline import DocumentMetadata, _normalize_garbage_characters
 from utils.prompt_generator import generate_system_prompt
 
 def _get_python_type(type_str: str) -> Type:

@@ -54,8 +54,16 @@ def get_schema_content(schema_id: str) -> Dict[str, Any]:
         return {"fields": []}  # Fallback empty schema
 
 
-def get_schema_details(schema_id: str) -> Optional[Dict[str, Any]]:
-    """Fetch full schema details including document_type and content."""
+def get_schema_details(schema_id: str, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Fetch full schema details including document_type and content.
+    
+    Args:
+        schema_id: Schema ID to fetch
+        tenant_id: Tenant ID for security check (allows global templates if None)
+        
+    Returns:
+        Schema details if found and accessible, None otherwise
+    """
     try:
         supabase_url = os.getenv("VITE_SUPABASE_URL")
         # Use service role key for backend operations (bypasses RLS)
@@ -65,7 +73,15 @@ def get_schema_details(schema_id: str) -> Optional[Dict[str, Any]]:
             return None
             
         import requests
+        
+        # Build query: allow global templates (tenant_id IS NULL) or tenant-owned schemas
         url = f"{supabase_url.rstrip('/')}/rest/v1/schemas?id=eq.{schema_id}"
+        if tenant_id:
+            url += f"&or=(tenant_id.is.null,tenant_id.eq.{tenant_id})"
+        else:
+            # If no tenant_id provided, only allow global templates
+            url += "&tenant_id=is.null"
+        
         headers = {
             "apikey": supabase_key,
             "Authorization": f"Bearer {supabase_key}",

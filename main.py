@@ -1,11 +1,9 @@
-import shutil
 import tempfile
 import os
 import time
 import uuid
 import asyncio
 import hashlib
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 from datetime import date
@@ -19,7 +17,7 @@ from pydantic import BaseModel, Field
 import json
 import requests
 
-from router import route_document
+from processors.document_classifier import classify_document_type
 from langchain_community.document_loaders import PDFPlumberLoader, TextLoader, Docx2txtLoader
 from langchain_core.documents import Document
 from utils.supabase_schemas import get_schema_content, get_schema_details
@@ -102,6 +100,42 @@ _SCHEMA_DETAILS_CACHE = _TTLCache(ttl_seconds=900)
 _SYSTEM_PROMPT_CACHE = _TTLCache(ttl_seconds=3600)
 
 
+def _determine_workflow(file_extension: str, content_length: int) -> str:
+    """Determine workflow based on file characteristics.
+    
+    Args:
+        file_extension: File extension (e.g., '.txt', '.pdf')
+        content_length: Length of document content
+        
+    Returns:
+        'basic' for .txt files or short content, 'balanced' otherwise
+    """
+    if file_extension.lower() == ".txt" or content_length < 50:
+        return "basic"
+    return "balanced"
+
+
+def _should_use_optimistic_path(schema_details: Optional[Dict[str, Any]], document_type: Optional[str]) -> bool:
+    """Check if we can use optimistic parallelism.
+    
+    Optimistic path requires knowing the document_type upfront (from schema or explicit parameter).
+    This indicates the schema has been used before and has cached prompts.
+    
+    Args:
+        schema_details: Schema details from database
+        document_type: Explicitly provided document type
+        
+    Returns:
+        True if document_type is known, False otherwise (will use leader-follower)
+    """
+    if document_type:
+        return True
+    if schema_details and schema_details.get("document_type"):
+        return True
+    return False
+
+
+
 @contextmanager
 def _stage_timer(timings_ms: Dict[str, int], name: str):
     start = time.time()
@@ -162,44 +196,6 @@ def _load_file_content(tmp_path: str, is_pdf: bool, is_txt: bool, is_docx: bool)
     except Exception as e:
         raise
 
-def _get_tenant_id_from_token(auth_header: Optional[str]) -> Optional[str]:
-    """Extract tenant_id from JWT token via Supabase."""
-    if not auth_header or not auth_header.startswith("Bearer "):
-        return None
-    
-    try:
-        token = auth_header.split(" ")[1]
-        supabase_url = os.getenv("VITE_SUPABASE_URL")
-        supabase_key = os.getenv("VITE_SUPABASE_ANON_KEY")
-        
-        if not supabase_url or not supabase_key:
-            return None
-        
-        # Get user from token
-        headers = {
-            "apikey": supabase_key,
-            "Authorization": f"Bearer {token}",
-        }
-        resp = requests.get(f"{supabase_url}/auth/v1/user", headers=headers, timeout=5)
-        if resp.status_code != 200:
-            return None
-        
-        user_id = resp.json().get("id")
-        if not user_id:
-            return None
-        
-        # Get tenant_id from profiles
-        profile_resp = requests.get(
-            f"{supabase_url}/rest/v1/profiles",
-            headers={**headers, "Content-Type": "application/json"},
-            params={"id": f"eq.{user_id}", "select": "tenant_id"},
-            timeout=5
-        )
-        if profile_resp.status_code == 200 and profile_resp.json():
-            return profile_resp.json()[0].get("tenant_id")
-        return None
-    except Exception:
-        return None
 
 
 def _get_user_id_from_token_cached(auth_header: Optional[str]) -> Optional[str]:
@@ -282,11 +278,11 @@ def _get_auth_context(auth_header: Optional[str]) -> tuple[Optional[str], Option
     return user_id, tenant_id, user_token
 
 
-def _get_schema_details_cached(schema_id: str) -> Optional[Dict[str, Any]]:
+def _get_schema_details_cached(schema_id: str, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     cached = _SCHEMA_DETAILS_CACHE.get(schema_id)
     if isinstance(cached, dict):
         return cached
-    details = get_schema_details(schema_id)
+    details = get_schema_details(schema_id, tenant_id)
     if isinstance(details, dict):
         _SCHEMA_DETAILS_CACHE.set(schema_id, details)
     return details
@@ -355,31 +351,6 @@ def _get_prompt_cache_tenant_id(*, schema_id: Optional[str], tenant_id: Optional
         return tenant_id
 
 
-def _get_user_id_from_token(auth_header: Optional[str]) -> Optional[str]:
-    """Extract Supabase auth user id from JWT token via Supabase."""
-    if not auth_header or not auth_header.startswith("Bearer "):
-        return None
-
-    try:
-        token = auth_header.split(" ")[1]
-        supabase_url = os.getenv("VITE_SUPABASE_URL")
-        supabase_key = os.getenv("VITE_SUPABASE_ANON_KEY")
-
-        if not supabase_url or not supabase_key:
-            return None
-
-        headers = {
-            "apikey": supabase_key,
-            "Authorization": f"Bearer {token}",
-        }
-        resp = requests.get(f"{supabase_url}/auth/v1/user", headers=headers, timeout=5)
-        if resp.status_code != 200:
-            return None
-
-        user_id = resp.json().get("id")
-        return user_id
-    except Exception:
-        return None
 
 
 def _get_period_start_utc() -> date:
@@ -647,232 +618,11 @@ async def process_document(
     schema_content: Optional JSON string containing the full schema
     batch_id: Optional batch ID for grouping multiple files processed together
     """
-    start_time = time.time()
-    tenant_id = _get_tenant_id_from_token(authorization)
-
     raise HTTPException(
         status_code=410,
         detail="Single-file processing is deprecated. Use POST /process-batch instead.",
     )
     
-    # Extract user token for RLS-compliant inserts
-    user_token = authorization.split(" ")[1] if authorization and authorization.startswith("Bearer ") else None
-    
-    # Generate batch_id if not provided
-    if not batch_id:
-        batch_id = str(uuid.uuid4())
-
-    # 1. Save to Temp File (Required for PDF loaders usually)
-    suffix = Path(file.filename).suffix
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        shutil.copyfileobj(file.file, tmp)
-        tmp_path = tmp.name
-
-    temp_schema_path = None # Track temp schema file cleanup
-
-    try:
-        # 2. Load Document for Router
-        # Check file extension
-        suffix_lower = suffix.lower()
-        is_pdf = suffix_lower == ".pdf"
-        is_txt = suffix_lower == ".txt"
-        is_docx = suffix_lower == ".docx"
-        is_image = suffix_lower in [".png", ".jpg", ".jpeg"]
-
-        if is_pdf or is_txt or is_docx:
-            # Use appropriate loader based on file type
-            if is_pdf:
-                loader = PDFPlumberLoader(tmp_path)
-            elif is_txt:
-                loader = TextLoader(tmp_path, encoding="utf-8")
-            else:  # .docx
-                loader = Docx2txtLoader(tmp_path)
-
-            load_start = time.time()
-            # Loader is synchronous and can block; run it in a thread so we don't
-            # stall the event loop under concurrency.
-            docs = await asyncio.to_thread(loader.load)
-
-            if not docs:
-                raise HTTPException(status_code=400, detail="Could not extract text from document")
-
-            # Combine pages for routing analysis
-            full_text = "\n".join([d.page_content for d in docs])
-            # Create a LangChain document for the router
-            router_doc = Document(page_content=full_text, metadata={"source": file.filename})
-
-            # 3. Determine Workflow
-            route_start = time.time()
-            route = route_document(router_doc, schema_id=schema_id)
-            doc_type = route.get("document_type", "generic")
-            workflow_name = route.get("workflow", "basic")
-
-        elif is_image:
-            # For images, we can't easily extract text for the router without OCR.
-            # So we default to the 'balanced' workflow (which uses Vision) and 'generic' type.
-            router_doc = Document(page_content="", metadata={"source": file.filename})
-            doc_type = "generic"
-            workflow_name = "balanced"
-
-        else:
-            raise HTTPException(status_code=400, detail=f"Unsupported file type: {suffix}")
-
-        # 3b. If the client/template explicitly provided a document_type
-        # (e.g., from the Supabase schemas table), let that override the
-        # router's inferred type. This makes the schemas table the primary
-        # source of truth for template document_type.
-        if document_type:
-            doc_type = document_type
-
-        # 4. Load Schema Content
-        schema_start = time.time()
-        schema_content = None
-        if schema_id:
-            schema_content = get_schema_content(schema_id)
-        
-        # Fallback to schema_content_from_request if not found in Supabase
-        if not schema_content and schema_content_from_request:
-            try:
-                schema_content = json.loads(schema_content_from_request)
-            except json.JSONDecodeError as e:
-                raise HTTPException(status_code=400, detail=f"Invalid schema JSON: {str(e)}")
-        
-        if not schema_content:
-            raise HTTPException(status_code=400, detail="No schema provided. Please select a template or provide schema content.")
-
-        # Write Schema to Temp File (for any extractors that might need file path)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".json", mode="w", encoding="utf-8") as tmp_schema:
-            json.dump(schema_content, tmp_schema)
-            temp_schema_path = tmp_schema.name
-
-        # 5. Run Extraction Workflow
-        from core_pipeline import DocumentMetadata
-        from processors.extract_fields_basic import extract_fields_basic
-        from processors.extract_fields_balanced import extract_fields_balanced
-        from processors.vision_generate_markdown import vision_generate_markdown
-
-        # Create metadata object required by extractors
-        doc_metadata = DocumentMetadata(
-            document_number="api-request",
-            filename=file.filename,
-            file_size=os.path.getsize(tmp_path),
-            file_path=tmp_path,
-            processed_date=None
-        )
-
-        extraction_result = {}
-
-        if workflow_name == "balanced":
-            # Vision + Text Extraction with Parallel Prompt Generation
-            from utils.prompt_generator import generate_system_prompt
-            
-            # Run vision_generate_markdown and generate_system_prompt in parallel.
-            # Both are synchronous and can block; run them in threads so we don't
-            # stall the event loop.
-            vision_wait_start = time.time()
-            vision_result, system_prompt = await asyncio.gather(
-                asyncio.to_thread(
-                    vision_generate_markdown,
-                    document=router_doc,
-                    metadata=doc_metadata,
-                    schema_content=schema_content,
-                ),
-                asyncio.to_thread(
-                    generate_system_prompt,
-                    document_type=doc_type,
-                    schema=schema_content,
-                ),
-            )
-            
-            markdown_content = vision_result.get("markdown_content")
-            structure_hints = vision_result.get("structure_hints")
-
-            # Extract Fields from Markdown (prompt already generated)
-            extract_start = time.time()
-            extraction_result = extract_fields_balanced(
-                schema_content=schema_content,
-                system_prompt=system_prompt,
-                markdown_content=markdown_content,
-                document_type=doc_type,
-                structure_hints=structure_hints,
-            )
-        else:
-            # Basic Text extraction
-            extract_start = time.time()
-            extraction_result = extract_fields_basic(
-                document=router_doc,
-                metadata=doc_metadata,
-                schema_content=schema_content,
-                document_type=doc_type
-            )
-
-        # 6. Log extraction result to Supabase (backend logging)
-        processing_duration_ms = int((time.time() - start_time) * 1000)
-        field_count = len([v for v in extraction_result.values() if v is not None]) if extraction_result else 0
-        schema_name = schema_content.get("document_type") or schema_content.get("name") if schema_content else None
-        
-        if tenant_id:
-            _log_extraction_result(
-                tenant_id=tenant_id,
-                filename=file.filename,
-                document_id=None,
-                schema_id=schema_id,
-                schema_name=schema_name,
-                field_count=field_count,
-                processing_duration_ms=processing_duration_ms,
-                workflow=workflow_name,
-                status="completed",
-                batch_id=batch_id,
-                user_token=user_token,
-            )
-
-        # 7. Build Response
-        # Add source filename to extraction results for traceability
-        extraction_result["source_file"] = file.filename
-
-        # For non-PDF types, we treat the document as a single logical page for now.
-        op_metadata = {
-            "page_count": len(docs) if is_pdf else 1,
-            "doc_type": doc_type,
-            "workflow": workflow_name,
-            "source": "api_upload"
-        }
-
-        return ProcessResponse(
-            status="success",
-            document_id="no-persistence",
-            results=extraction_result,
-            operational_metadata=op_metadata,
-            batch_id=batch_id
-        )
-
-    except Exception as e:
-        # Log failed extraction
-        if tenant_id:
-            processing_duration_ms = int((time.time() - start_time) * 1000)
-            _log_extraction_result(
-                tenant_id=tenant_id,
-                filename=file.filename,
-                document_id=None,
-                schema_id=schema_id,
-                schema_name=None,
-                field_count=0,
-                processing_duration_ms=processing_duration_ms,
-                workflow=workflow_name if 'workflow_name' in dir() else "unknown",
-                status="failed",
-                error_message=str(e)[:500],  # Truncate long errors
-                batch_id=batch_id,
-                user_token=user_token,
-            )
-        raise HTTPException(status_code=500, detail=str(e))
-
-    finally:
-        # Cleanup temp file
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        # Cleanup temp schema file
-        if temp_schema_path and os.path.exists(temp_schema_path):
-            os.unlink(temp_schema_path)
 
 # Semaphore for batch processing concurrency control
 BATCH_SEMAPHORE = asyncio.Semaphore(5)
@@ -880,16 +630,18 @@ BATCH_SEMAPHORE = asyncio.Semaphore(5)
 
 # Shared context for batch processing (leader-follower pattern)
 class BatchSharedContext:
-    """Pre-computed context from leader document, shared with followers."""
+    """Pre-computed context from leader document, shared with followers.
+    
+    Contains document type, schema, and system prompt that can be reused across files.
+    Workflow is determined per-file based on file extension.
+    """
     def __init__(
         self,
         doc_type: str,
-        workflow_name: str,
         schema_content: Dict[str, Any],
         system_prompt: Optional[str] = None,
     ):
         self.doc_type = doc_type
-        self.workflow_name = workflow_name
         self.schema_content = schema_content
         self.system_prompt = system_prompt
 
@@ -925,10 +677,8 @@ async def _process_single_file(
         start_time = time.time()
         timings_ms: Dict[str, int] = {"semaphore_wait_ms": semaphore_wait_ms}
         request_id = f"{batch_id}:{file.filename}"
-        tenant_id = tenant_id if tenant_id is not None else _get_tenant_id_from_token(authorization)
-        user_token = user_token if user_token is not None else (
-            authorization.split(" ")[1] if authorization and authorization.startswith("Bearer ") else None
-        )
+        if tenant_id is None or user_token is None:
+            _, tenant_id, user_token = _get_auth_context(authorization)
         
         suffix = Path(file.filename).suffix
         tmp_path = None
@@ -994,35 +744,18 @@ async def _process_single_file(
             
             # Use shared context from leader, or compute for leader
             if shared_context:
-                # Follower: use pre-computed values
+                # Follower: use pre-computed values from leader
                 doc_type = shared_context.doc_type
-                workflow_name = shared_context.workflow_name
                 schema_content = shared_context.schema_content
                 system_prompt = shared_context.system_prompt
-                
-                # Image files MUST use balanced (vision) workflow regardless of shared context
-                if is_image:
-                    workflow_name = "balanced"
-
-                # .txt files MUST use basic workflow regardless of shared context
-                # (mirrors router.py behavior which forces basic for .txt sources)
-                if is_txt:
-                    workflow_name = "basic"
 
             else:
                 # Leader or standalone: compute values
                 if is_image:
                     doc_type = "generic"
-                    workflow_name = "balanced"
                 else:
                     with _stage_timer(timings_ms, "router"):
-                        route = route_document(router_doc, schema_id=schema_id)
-                    doc_type = route.get("document_type", "generic")
-                    workflow_name = route.get("workflow", "basic")
-
-                # .txt files should always use basic workflow
-                if is_txt:
-                    workflow_name = "basic"
+                        doc_type = classify_document_type(router_doc, schema_id=schema_id, tenant_id=tenant_id)
                 
                 # Override with explicit document_type if provided
                 if document_type:
@@ -1043,7 +776,7 @@ async def _process_single_file(
                 if not schema_content:
                     return None, {"filename": file.filename, "error": "No schema provided"}, None, None
                 
-                # Generate system prompt for leader (followers will reuse for both workflows)
+                # Generate system prompt for leader (followers will reuse)
                 system_prompt = None
                 if is_leader:
                     from utils.prompt_generator import generate_system_prompt
@@ -1055,6 +788,9 @@ async def _process_single_file(
                             schema_id=schema_id,
                             user_token=user_token,
                         )
+            
+            # Determine workflow based on file characteristics
+            workflow_name = _determine_workflow(suffix, len(full_text) if 'full_text' in locals() else 0)
             
             # Run extraction
             from core_pipeline import DocumentMetadata
@@ -1135,11 +871,10 @@ async def _process_single_file(
             if is_leader:
                 result_shared_context = BatchSharedContext(
                     doc_type=doc_type,
-                    # User requested default to 'balanced' (vision) for safety with scanned docs
-                    workflow_name="balanced", 
                     schema_content=schema_content,
                     system_prompt=system_prompt,
                 )
+            
             
             # Log result
             processing_duration_ms = int((time.time() - start_time) * 1000)
@@ -1374,34 +1109,37 @@ async def process_batch(
     batch_timings_ms["auth_and_quota_ms"] = int((time.time() - auth_and_quota_start_time) * 1000)
 
     try:
-        # Optimistic Parallelism: If schema_id is provided, we can skip the Leader step
-        # because we know the doc_type and can fetch the schema/prompt upfront.
+        # Optimistic Parallelism: Only use if schema has been used before (has document_type).
+        # If document_type exists, we have cached prompts and can process all files in parallel.
+        # If document_type is None, use leader-follower to discover type from first document.
         optimistic_context_start_time = time.time()
         optimistic_context = None
         if schema_id:
-            schema_details = _get_schema_details_cached(schema_id)
+            schema_details = _get_schema_details_cached(schema_id, tenant_id)
             if schema_details and schema_details.get("content"):
                 
-                # Determine doc_type (prefer explicit > schema > generic)
-                opt_doc_type = document_type or schema_details.get("document_type") or "generic"
-                opt_schema_content = schema_details.get("content")
+                # Check if document_type exists (explicit or from schema)
+                # Only go optimistic if we have a known document_type (not None)
+                opt_doc_type = document_type or schema_details.get("document_type")
                 
-                # Generate system prompt once
-                opt_system_prompt = _get_system_prompt_cached(
-                    schema_id=schema_id,
-                    document_type=opt_doc_type,
-                    schema=opt_schema_content,
-                    tenant_id=_get_prompt_cache_tenant_id(schema_id=schema_id, tenant_id=tenant_id),
-                    user_token=user_token,
-                )
-                
-                optimistic_context = BatchSharedContext(
-                    doc_type=opt_doc_type,
-                    # User requested default to 'balanced' (vision) for safety with scanned docs
-                    workflow_name="balanced", 
-                    schema_content=opt_schema_content,
-                    system_prompt=opt_system_prompt
-                )
+                # Only create optimistic context if document_type is known
+                if opt_doc_type:
+                    opt_schema_content = schema_details.get("content")
+                    
+                    # Generate system prompt once
+                    opt_system_prompt = _get_system_prompt_cached(
+                        schema_id=schema_id,
+                        document_type=opt_doc_type,
+                        schema=opt_schema_content,
+                        tenant_id=_get_prompt_cache_tenant_id(schema_id=schema_id, tenant_id=tenant_id),
+                        user_token=user_token,
+                    )
+                    
+                    optimistic_context = BatchSharedContext(
+                        doc_type=opt_doc_type,
+                        schema_content=opt_schema_content,
+                        system_prompt=opt_system_prompt
+                    )
 
         batch_timings_ms["optimistic_context_ms"] = int((time.time() - optimistic_context_start_time) * 1000)
 
@@ -1580,11 +1318,11 @@ async def delete_schema_endpoint(
     Delete a schema and its corresponding prompt cache entry.
     Requires authentication.
     """
-    user_id = _get_user_id_from_token(authorization)
+    user_id = _get_user_id_from_token_cached(authorization)
     if not user_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
         
-    from utils.supabase_schemas import get_schema_details, delete_schema
+    from utils.supabase_schemas import delete_schema
     from utils.prompt_generator import calculate_prompt_cache_key, delete_prompt_from_cache
     
     # 1. Fetch schema details to calculate cache key

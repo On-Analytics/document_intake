@@ -35,7 +35,7 @@ This lets us:
 
 ## 3. Router behavior
 
-The router is implemented as `route_document(document, schema_id=None)` in `router.py`.
+The router is implemented as `classify_document_type(document, schema_id=None, tenant_id=None)` in [processors/document_classifier.py](file:///c:/Users/oscar/CascadeProjects/DocumentProcessor/document_intake/processors/document_classifier.py).
 
 - **Inputs**:
   - `document`: a LangChain `Document` with `page_content` and `metadata` (especially `metadata["source"]`).
@@ -46,276 +46,104 @@ The router is implemented as `route_document(document, schema_id=None)` in `rout
     - `workflow`: `"basic"` or `"balanced"`.
     - `document_type`: final document type string used downstream (may come from schema or LLM).
 
-### 3.1 High-level decision flow
+### 3.1 High-level decision flow (Multi-Layered Caching)
 
-1. **Schema-provided document_type (if schema_id is present)**
-   - If `schema_id` is provided, `get_schema_document_type(schema_id)` is called against Supabase.
-   - If Supabase returns a non-empty `document_type`, that value is treated as the **authoritative** type for this run and overrides any `document_type` proposed by the LLM.
-   - If Supabase does **not** have a `document_type` yet, the LLM’s inferred `document_type` is used for the run; if it is not `"generic"`, it is also written back to Supabase via `update_schema_document_type` so future runs use that stored type.
+The system uses a hierarchical approach to identify the document type, prioritizing speed and cost-efficiency:
 
-2. **File-extension heuristic (workflow override for .txt)**
-   - If the source filename (from `document.metadata["source"]`) ends with `.txt`:
-     - The router will force the final `workflow` to `"basic"`.
-     - The router may still infer `document_type` (via cache/LLM) unless short-content optimization triggers.
+1. **Layer 1: Database-Provided document_type (Highest Priority)**
+   - Before any AI or file checks, `get_schema_document_type(schema_id, tenant_id)` is called.
+   - It checks the Supabase `schemas` table for a `document_type` associated with that schema and tenant.
+   - If found, this value is used as the **authoritative** type. **The AI classification call is skipped entirely.**
+   - If missing, the system moves to Layer 2.
 
-3. **Normalize content and build snippet**
-   - Uses `_normalize_garbage_characters(document.page_content or "")` to clean up text.
-   - **Current behavior:** takes the first ~4000 characters as `snippet` for routing (a single-prefix sample).
-   - **Planned improvement for multi-page documents:** instead of a single long prefix, sample up to ~2000 characters **per page** across the first few pages (e.g., first 3 pages), then concatenate these page snippets. This spreads the context over multiple pages so the router can see both early boilerplate and later structured content.
+2. **Layer 2: Router Cache Lookup (File-Content Hashing)**
+   - Computes a unique cache key based on the first 2,000 characters of the document and the `schema_id`.
+   - Looks up this key in the local `.router_cache/` directory.
+   - If a match is found, the cached result is returned instantly. **The AI classification call is skipped.**
 
-4. **Router cache lookup (content + schema_id)**
-   - Computes a cache key via `generate_cache_key` using:
-     - `content = snippet`
-     - `extra_params = {"schema_id": schema_id}`
-   - Looks up this key in `ROUTER_CACHE_DIR` using `get_cached_result`.
-   - If found, returns the cached result **immediately**:
-     - `{"workflow": ..., "document_type": ...}`
-   - This avoids repeated LLM calls for the same (snippet, schema_id) pair.
+3. **Layer 3: LLM Router Decision (The "Thinking" Step)**
+   - Only if Layer 1 and 2 fail, the system calls `gpt-4o-mini`.
+   - It performs a structured classification to determine the `document_type`.
+   - The result is then:
+     - Written back to Supabase (Layer 1 backfill) so future runs skip the AI.
+     - Saved to the `.router_cache/` (Layer 2) for near-instant repeated access.
 
-5. **Short-content optimization**
-   - If the cleaned `snippet` has fewer than 50 non-whitespace characters:
-     - Returns `workflow = "basic"`, `document_type = "generic"`.
-     - No LLM call or cache write.
+### 3.2 Snippet Construction & Optimization
 
-6. **LLM router decision**
-   - Calls `_make_llm_decision(snippet)` which:
-     - Uses `ChatOpenAI` with a structured `RouterOutput` schema.
-     - Returns a `workflow` and an LLM-inferred `document_type` (fallbacks to `workflow="balanced"`, `document_type="generic"` on errors).
-   - The **final** `document_type` used for the run is:
-     - The schema `document_type` if it exists, otherwise
-     - The LLM-inferred `document_type`.
+- **Normalize content**: Uses `_normalize_garbage_characters` to clean noisy text.
+- **Snippet size**: Takes the first **2,000 characters** for routing. This is sufficient to cover the header/first page where most identifying context resides.
+- **Short-content optimization**: If the snippet has < 50 characters, it instantly returns `document_type = "generic"` without calling the LLM.
 
-7. **Schema backfill (optional update)**
-   - If `schema_id` is provided, the schema has no `document_type` yet, and the LLM returns a non-`"generic"` type:
-     - Calls `update_schema_document_type(schema_id, decision["document_type"])` to persist the inferred type back into Supabase.
+### 3.3 Per-File Workflow Selection
 
-8. **Write to router cache**
-   - Stores the final decision in `ROUTER_CACHE_DIR` via `save_to_cache` using the same cache key computed earlier:
-     - `{"workflow": decision["workflow"], "document_type": final_doc_type}`
-   - Subsequent calls with the same (snippet, schema_id) will reuse this cached routing result.
+The final workflow for a specific file is determined by `_determine_workflow(extension, length)`:
+- **"basic"**: Triggered for `.txt` files or very short content (< 50 characters).
+- **"balanced"**: Default for all other files (PDFs, Docx, Images), utilizing the Vision-enhanced pipeline.
 
 ---
 
-## 4. Balanced workflow (registry)
+## 4. Balanced workflow
 
-In `WORKFLOW_REGISTRY`, the **balanced** entry conceptually contains three steps:
-
-1. `vision_generate_markdown`
-2. `prompt_generator` (explicit step)
-3. `extract_fields_balanced`
+The **balanced** workflow (Vision-Enhanced) involves two primary stages before final extraction:
 
 ### `vision_generate_markdown`
 
-Implemented in `processors/vision_generate_markdown.py` as:
+Implemented in [processors/vision_generate_markdown.py](file:///c:/Users/oscar/CascadeProjects/DocumentProcessor/document_intake/processors/vision_generate_markdown.py) as:
 
 `vision_generate_markdown(document, metadata, schema_content) -> Dict[str, Any]`
 
-- **Inputs**:
-  - `document`: LangChain `Document`.
-    - Not heavily used in the current implementation; primary source is `metadata.file_path`.
-  - `metadata: DocumentMetadata` (from `core_pipeline`), including at least:
-    - `file_path`: path to the original file (PDF or image).
-    - `filename`: used in prompt instructions for context.
-  - `schema_content: Dict[str, Any]`:
-    - Currently accepted for future schema-aware behavior but not read inside this function yet.
-
-- **Outputs** (`Dict[str, Any]`):
-  - `markdown_content: str`:
-    - Human-readable markdown representation of the document generated by the vision model.
-  - `structure_hints: Dict[str, Any]`:
-    - Lightweight, derived metadata computed by `_analyze_markdown_structure`, e.g.:
-      - `has_tables: bool`
-      - `table_count: int`
-      - `table_columns: List[str]`
-      - `multi_row_entries: bool`
-      - `has_multi_column_layout: bool`
-      - `section_count: int`
-
-- **Caching behavior**:
-  - Local filesystem caching is currently disabled for this step.
-
-- **Vision vs non-vision path**:
-  - If `metadata.file_path` ends with `.pdf`:
-    - Uses `convert_pdf_to_images(file_path)` to produce a list of base64-encoded page images.
-  - If `metadata.file_path` ends with `.png`, `.jpg`, `.jpeg`:
-    - Reads the file bytes, encodes as base64, and wraps into a single image list.
-  - If no images can be produced (not a supported extension or failure):
-    - Returns `{"markdown_content": "", "structure_hints": {}}` without calling the LLM.
-
-- **LLM call (vision)**:
-  - Constructs a **system prompt** describing the task: convert the document into well-structured markdown while preserving layout and key information.
-  - Builds a **base instruction** including the filename and formatting guidelines:
-    - Use headers, lists, and tables.
-    - Keep each logical item in a single table row.
-    - Handle multi-column layouts carefully.
-    - Preserve values exactly.
-  - Assembles `HumanMessage` content:
-    - First a text block with the base instruction.
-    - Then one or more `image_url` entries with `data:image/jpeg;base64,...` URLs for each page image.
-  - Uses `ChatOpenAI` with:
-    - `model = os.getenv("VISION_MODEL", "gpt-4o-mini")`.
-    - `temperature = 0`.
-    - `.with_structured_output(MarkdownOutput, method="function_calling")` to parse into the `MarkdownOutput` pydantic model.
-
-- **Post-processing**:
-  - Extracts `markdown_content` from the model output.
-  - Runs `_analyze_markdown_structure(markdown_content)` to compute `structure_hints` (tables, sections, simple layout cues).
-  - Returns the result to the caller.
+- **Operation**: 
+  - Converts PDFs or images into base64 images.
+  - Calls `gpt-4o-mini` (Vision) to produce a structured **Markdown** representation.
+  - Runs `_analyze_markdown_structure` to extract `structure_hints` (tables, multi-column signs, etc.).
 
 ### `prompt_generator`
 
-Implemented in `utils/prompt_generator.py` as:
+Implemented in [utils/prompt_generator.py](file:///c:/Users/oscar/CascadeProjects/DocumentProcessor/document_intake/utils/prompt_generator.py) as:
 
-`generate_system_prompt(document_type, schema) -> str`
+`generate_system_prompt(document_type, schema, tenant_id=None, schema_id=None, user_token=None) -> str`
 
-- **Inputs**:
-  - `document_type: str`:
-    - High-level type label (e.g., `"resume"`, `"invoice"`, `"claim"`).
-    - Included in the meta prompt so the generated system prompt is specialized.
-  - `schema: Dict[str, Any]`:
-    - Full JSON schema definition used for extraction (same structure as `schema_content`).
-
-- **Output**:
-  - `system_prompt: str`:
-    - A single string used as the **system message** for downstream extraction LLMs (basic and balanced workflows).
-
-- **Caching behavior (Supabase `prompt_cache` table)**:
-  - Computes a **canonical JSON** string for the schema (`sort_keys=True`) and hashes it:
-    - `schema_hash = sha256(canonical_schema).hexdigest()`.
-  - Builds a `cache_key = sha256(f"{document_type}:{schema_hash}")`.
-  - Looks up this key in Supabase `prompt_cache` via `_get_cached_prompt_from_supabase(cache_key)` using `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`.
-  - If a cached row exists:
-    - Returns `system_prompt` from Supabase.
-    - No OpenAI call is made.
-  - If no cache entry exists:
-    - Calls the LLM once to generate a new `system_prompt`.
-    - Saves `{cache_key, document_type, schema_hash, system_prompt}` back into Supabase via `_save_prompt_to_supabase` for reuse across deployments.
-
-- **LLM behavior**:
-  - Uses `ChatOpenAI` with:
-    - `model="gpt-4o"`.
-    - `temperature=0`.
-    - Structured output model `SystemPromptOutput` with a single `system_prompt: str` field.
-  - System (`meta_system_prompt`) describes the meta-task: design an optimal **system prompt** for extraction given a document type and schema.
-  - User prompt includes:
-    - The `document_type`.
-    - The JSON schema (pretty-printed).
-    - Explicit instructions about:
-      - Handling nested fields and lists.
-      - Handling table-like document types (invoices, bank statements, forms).
-      - Enforcing strict schema alignment.
-  - On success:
-    - Returns `result.system_prompt`.
-  - On failure (exceptions, network issues):
-    - Logs a warning and falls back to a **generic** system prompt string that still enforces schema-aligned extraction.
-
-> **Note:** `vision_generate_markdown` and `prompt_generator` are independent and can be run in parallel by the orchestrator.
+- **Operation**:
+  - Dynamically builds a set of instructions tailored to the specific `document_type` and JSON schema.
+  - Utilizes the **Supabase `prompt_cache`** to ensure expensive instruction generation only happens once per (Type + Schema) combination.
 
 ### `extract_fields_balanced`
 
-Implemented in `processors/extract_fields_balanced.py` as:
+Implemented in [processors/extract_fields_balanced.py](file:///c:/Users/oscar/CascadeProjects/DocumentProcessor/document_intake/processors/extract_fields_balanced.py) as:
 
-`extract_fields_balanced(document, metadata, schema_content, markdown_content=None, document_type="generic", structure_hints=None) -> Dict[str, Any]`
+`extract_fields_balanced(schema_content, system_prompt, markdown_content, document_type="generic", structure_hints=None) -> Dict[str, Any]`
 
-- **Inputs**:
-  - `document: Document`:
-    - Full text version of the document (used if `markdown_content` is not provided).
-  - `metadata: DocumentMetadata`:
-    - Includes `filename` and other context used in the user prompt.
-  - `schema_content: Dict[str, Any]`:
-    - JSON schema describing fields to extract (same structure used by `generate_system_prompt`).
-  - `markdown_content: Optional[str]`:
-    - Preferred content for extraction when available (output of `vision_generate_markdown`).
-    - If `None` or empty, falls back to `document.page_content`.
-  - `document_type: str`:
-    - Document type label used to specialize the system prompt via `generate_system_prompt(document_type, schema_content)`.
-  - `structure_hints: Optional[Dict[str, Any]]`:
-    - Structural metadata from the vision stage (tables, multi-column, section counts, etc.).
-    - Used to enrich the user prompt but **not** part of the Pydantic model.
-
-- **Outputs**:
-  - A `Dict[str, Any]`:
-    - Keys correspond exactly to field names from the schema.
-    - Values are typed according to the dynamically built Pydantic model.
+- **Operation**:
+  - Dynamically creates a **Pydantic model** matching the selected schema.
+  - Combines the pre-computed `system_prompt`, `markdown_content`, and `structure_hints` into a comprehensive request to `gpt-4o-mini`.
+  - Returns raw JSON extraction results.
 
 - **Dynamic schema/model construction**:
   - Reads `fields = schema_content.get("fields", [])`.
-  - If `fields` is empty:
-    - Immediately returns `{}` (no extraction attempted).
   - Uses `_get_python_type` to map field `type` strings (e.g. `"string"`, `"integer"`, `"list[object]"`) to Python types.
-  - Builds a dynamic `BaseModel` subclass via `_create_dynamic_model(schema)` where:
-    - Each schema field becomes a Pydantic field with description.
-    - Required fields stay required; non-required fields become `Optional[...]` with default `None`.
-
-- **Content selection and caching**:
-  - Chooses `content_to_use`:
-    - `markdown_content` if provided, else `document.page_content or ""`.
-  - Local filesystem caching is currently disabled for this step.
-
-- **Prompt construction**:
-  - Builds a human-readable **fields block** summarizing each schema field: `- name (type): description`.
-  - Calls `generate_system_prompt(document_type, schema_content)` to obtain the LLM **system prompt**.
-  - Converts `structure_hints` (if any) into a short bullet list, e.g. table counts, column names, multi-column layout, etc., appended as "Structural hints".
-  - Constructs a `user_prompt` that includes:
-    - Extraction instructions (do not invent data, null/empty list for missing fields).
-    - The filename.
-    - The fields block.
-    - The structural hints section (if present).
-    - The full `content_to_use` (markdown or raw text) delimited by separators.
+  - Builds a dynamic `BaseModel` subclass via `_create_dynamic_model(schema)`.
 
 - **LLM call and model**:
-  - Uses `ChatOpenAI` with:
-    - `model = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini")` (overrideable via env var).
-    - `temperature = 0`.
-    - `.with_structured_output(DynamicModel, method="function_calling")` where `DynamicModel` is the dynamic Pydantic model.
-  - Sends the system prompt from `generate_system_prompt` and the constructed user prompt.
-  - Receives a typed Pydantic instance and converts it to a `dict` via `model.model_dump()`.
-
-- **Post-processing**:
-  - Returns the result dict to the caller.
+  - Uses `ChatOpenAI` with `model = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini")`.
+  - Sends the system prompt from `generate_system_prompt` and a constructed user prompt containing structural hints and content.
+  - Returns the result dict.
 
 ---
 
 ## 5. Basic extraction workflow
 
-- Workflow contains only `extract_fields_basic`.
-- No vision step; simpler text-only path.
+The **basic** workflow is used for plain text documents or simple content that doesn't require Vision analysis.
 
-Implemented in `processors/extract_fields_basic.py` as:
+### `extract_fields_basic`
 
-`extract_fields_basic(document, metadata, schema_content, document_type="generic") -> Dict[str, Any]`
+Implemented in [processors/extract_fields_basic.py](file:///c:/Users/oscar/CascadeProjects/DocumentProcessor/document_intake/processors/extract_fields_basic.py) as:
 
-- **Inputs**:
-  - `document: Document`:
-    - Text content (`page_content`) is normalized and used directly (no markdown).
-  - `metadata: DocumentMetadata`:
-    - Provides `filename` for prompt context.
-  - `schema_content: Dict[str, Any]`:
-    - Direct schema definition (same format as `schema_content` in balanced workflow).
-  - `document_type: str`:
-    - Used to specialize the system prompt via `generate_system_prompt(document_type, schema_content)`.
+`extract_fields_basic(document, metadata, schema_content, document_type="generic", system_prompt=None) -> Dict[str, Any]`
 
-- **Outputs**:
-  - A `Dict[str, Any]`:
-    - Keys are schema field names.
-    - Values are typed according to a dynamically built Pydantic model (same pattern as balanced).
-
-- **Behavior and caching**:
-  - Normalizes `document.page_content` via `_normalize_garbage_characters`.
-  - Local filesystem caching is currently disabled for this step.
-  - Builds a dynamic Pydantic model from `schema_content.fields` via `_create_dynamic_model`.
-  - Generates a **system prompt** using `generate_system_prompt(document_type, schema_content)` (shared with balanced workflow).
-  - Constructs a user prompt containing:
-    - Extraction instructions (no hallucination; null/empty list for missing).
-    - Filename.
-    - Human-readable description of each schema field.
-    - The full normalized text content between separators.
-  - Uses `ChatOpenAI(model="gpt-4o-mini", temperature=0)` with `.with_structured_output(DynamicModel, method="function_calling")` to produce a typed result.
-  - Returns the result dict.
-
-- **Shared prompt generation**:
-  - Both **basic** and **balanced** workflows call `generate_system_prompt(document_type, schema)` from `utils.prompt_generator`.
-  - This ensures consistent extraction behavior and prompt caching across workflows.
+- **Operation**:
+  - Uses the same dynamic **Pydantic model** and `system_prompt` as the balanced workflow.
+  - Operates on the raw text content (`router_doc`) instead of markdown.
+  - Ideal for low-cost, high-speed extraction from clean text files.
 
 ---
 
@@ -337,45 +165,21 @@ Implemented in `processors/extract_fields_basic.py` as:
 
 The batch endpoint (`POST /process-batch` in `main.py`) supports two high-level modes for determining `document_type` and choosing a workflow.
 
-### 9.1 Optimistic Mode (schema-based)
+### 9.1 Optimistic Mode (Parallel Processing)
 
-Optimistic Mode activates when a `schema_id` is provided and the backend can fetch schema details upfront (including schema `content`). In this mode, the system does not need a leader document to determine type.
+Optimistic Mode activates when a `schema_id` or explicit `document_type` is provided upfront.
 
-- **`document_type` source**:
-  - Derived from the schema record in Supabase (`schemas.document_type`) when present.
-  - If `schemas.document_type` is missing, the system falls back to leader-follower behavior.
+- **Operation**:
+  - The system bypasses the leader-follower bottleneck.
+  - All files in the batch are processed concurrently (limited by `BATCH_SEMAPHORE` of 5).
+  - Each file independently fetches the cached system prompt and executes its determined workflow (`basic` or `balanced`).
 
-- **Prompt behavior**:
-  - `generate_system_prompt(document_type, schema_content)` is called once.
-  - It first checks the Supabase `prompt_cache` table.
-  - If no cached entry exists for that `(document_type, schema_hash)` combination, the prompt is generated and then written to `prompt_cache`.
+### 9.2 Leader–Follower Mode (Legacy Support)
 
-- **Default workflow behavior**:
-  - The shared context defaults to `workflow_name = "balanced"` (vision-first default).
-  - Per-file overrides apply:
-    - **Images (`.png/.jpg/.jpeg`)**: always forced to `balanced`.
-    - **Text files (`.txt`)**: forced to `basic` (mirrors router behavior).
+Used when the `document_type` is unknown and no schema is provided (rare in current configuration).
 
-- **Parallelism**:
-  - Files are processed concurrently but limited by `BATCH_SEMAPHORE` (currently 5).
-
-### 9.2 Leader–Follower Mode (router-based)
-
-Leader–Follower Mode is used when the schema does not provide a reliable `document_type` upfront.
-
-- **Leader**:
-  - Runs the router (`route_document`) to determine `document_type` and a suggested workflow.
-  - Router call behavior:
-    - Uses router cache when available.
-    - If content is extremely short, returns `document_type = "generic"` without calling the LLM.
-    - Otherwise may call the LLM router to infer `document_type`.
-  - A single `system_prompt` is generated once for the leader (`generate_system_prompt`) and reused for followers.
-
-- **Followers**:
-  - Reuse the leader’s `document_type`, schema, and prompt (router is not re-run for each follower).
-  - Per-file overrides apply:
-    - **Images (`.png/.jpg/.jpeg`)**: always forced to `balanced`.
-    - **Text files (`.txt`)**: forced to `basic`.
+- **Leader**: Runs the classification/routing and generates the system prompt.
+- **Followers**: Wait for the leader to complete, then reuse the `shared_context` (Type, Schema, Prompt) to process their specific content.
 
 ---
 
@@ -423,17 +227,14 @@ This section ties together the components above into a single, end-to-end flow f
 
 ### 8.2 Routing decision
 
-4. **Route document**
-   - Call `route_document(document, schema_id)`:
-     - Optionally reads `document_type` from Supabase schemas table.
+4. **Classify document type**
+   - Call `classify_document_type(document, schema_id, tenant_id)` in `processors/document_classifier.py`:
+     - **Layer 1**: Performs instant database lookup for `document_type` on the schema.
+     - **Layer 2**: Checks `.router_cache` using a hash of the first **2,000 chars**.
+     - **Layer 3**: Calls LLM (`gpt-4o-mini`) to classify content if layers 1 & 2 fail.
      - Applies `.txt` heuristic and short-content optimization.
-     - Builds a text `snippet` (currently first ~4000 chars; future: multi-page sampling).
-     - Checks router cache (`ROUTER_CACHE_DIR`) keyed by `(snippet, schema_id)`.
-     - If cache miss and enough content, calls the LLM router to decide:
-       - `workflow`: `"basic"` or `"balanced"`.
-       - `document_type`: from schema if present, otherwise LLM-inferred.
-     - Optionally backfills `document_type` into Supabase when missing.
-     - Saves `{workflow, document_type}` to router cache and returns it.
+     - Automatically backfills `document_type` into Supabase once determined.
+     - Returns final `document_type` to the pipeline.
 
 5. **Downstream choice**
    - If `workflow == "basic"` → use the **Basic extraction workflow**.
@@ -449,20 +250,13 @@ This section ties together the components above into a single, end-to-end flow f
    - Returns the result.
 
 7. **Prompt generation** (`generate_system_prompt`)
-   - Inputs: `document_type`, `schema_content`.
+   - Inputs: `document_type`, `schema_content`, `tenant_id`, `schema_id`, `user_token`.
    - Computes `(document_type, schema_hash)` cache key.
-   - Reads/writes Supabase `prompt_cache` table to reuse a stable `system_prompt` across runs and deployments.
+   - Reads/writes Supabase `prompt_cache` table to reuse a stable `system_prompt`.
 
 8. **Balanced extraction** (`extract_fields_balanced`)
-   - Inputs:
-     - `document`, `metadata`, `schema_content`.
-     - `markdown_content`, `structure_hints` from the vision step.
-     - `document_type` and `system_prompt` from the router/prompt generator.
-   - Selects `content_to_use = markdown_content` (or raw text fallback).
-   - Dynamically builds a Pydantic model from `schema_content.fields`.
-   - Calls the extraction LLM (`EXTRACTION_MODEL`, default `gpt-4o-mini`) with:
-     - `system_prompt` from `generate_system_prompt`.
-     - A user prompt containing schema descriptions, structural hints, and document content.
+   - Inputs: `schema_content`, `system_prompt`, `markdown_content`, `document_type`, `structure_hints`.
+   - Runs `extract_fields_balanced` as detailed in Section 4.
    - Returns a typed dict of extracted fields.
 
 ### 8.4 Basic workflow path
@@ -480,15 +274,10 @@ This section ties together the components above into a single, end-to-end flow f
       - User prompt containing schema descriptions and full normalized text.
     - Returns the typed dict result.
 
-### 8.5 Outputs and logging
+### 8.5 Persistence and Logging
 
-11. **Result persistence / logging (conceptual)**
-    - For each run, the system can log:
-      - `content_hash` or snippet hash.
-      - `document_type`.
-      - `schema_id`.
-      - `workflow`.
-    - These records can be used later to:
-      - Avoid re-routing identical content.
-      - Analyze routing and extraction quality over time.
+11. **Supabase Storage**
+    - **Documents Table**: Stores per-file metadata (`filename`, `file_size`, `page_count`, `tenant_id`).
+    - **Extraction Results Table**: Stores the actual results (`status`, `field_count`, `processing_duration_ms`, `workflow`, `batch_id`).
+    - **Deferred Persistence**: For high-volume batches, extraction results are collected and written in chunks to optimize database performance.
 

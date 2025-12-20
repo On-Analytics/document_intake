@@ -1,12 +1,8 @@
-from pathlib import Path
 from typing import Dict, Any, List, Optional, Type
 
 import os
-import json
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, create_model, Field
-
-from core_pipeline import BASE_DIR
 
 def _get_python_type(type_str: str) -> Type:
     """Map schema type strings to Python types."""
@@ -42,12 +38,6 @@ def _create_dynamic_model(schema: Dict[str, Any]) -> Type[BaseModel]:
 
     return create_model("DynamicExtractionBalanced", **fields)
 
-def _load_schema(schema_path: Path) -> Dict[str, Any]:
-    if not schema_path.exists():
-        return {"fields": []}
-
-    with schema_path.open("r", encoding="utf-8") as f:
-        return json.load(f)
 
 
 def extract_fields_balanced(
