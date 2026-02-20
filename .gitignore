@@ -34,4 +34,4 @@ dist/
 templates/
 
 # Supabase (managed directly in Supabase dashboard)
-#supabase/
+supabase/setup_db.sql
