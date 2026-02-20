@@ -21,6 +21,7 @@ pip-delete-this-directory.txt
 # Project Specific (Local Data)
 !requirements.txt
 notes.txt
+note.txt
 
 # Node / Frontend
 node_modules/
