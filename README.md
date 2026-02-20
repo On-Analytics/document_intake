@@ -24,6 +24,14 @@ The `templates/` folder contains simple JSON schema definitions for common docum
 
 Each file declares a `document_type`, a short `description`, and a list of `fields` with basic metadata.
 
+## Configuration
+
+1.  **Environment Variables**: Copy `.env.example` to `.env` and fill in your API keys and Supabase credentials.
+    ```bash
+    cp .env.example .env
+    ```
+2.  **Database Setup**: The initial database schema can be found in `supabase/setup_db.sql`. This script sets up the necessary tables and functions in your Supabase project.
+
 ## Running the Backend
 
 Create and activate a virtual environment, install dependencies, and run the API server (for example, with Uvicorn):
